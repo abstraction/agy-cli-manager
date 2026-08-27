@@ -73,6 +73,13 @@ python3 -m venv .venv
 pip install -e .
 ```
 
+Using `uv` (for a globally available, isolated command):
+
+```bash
+cd agy-cli-manager
+uv tool install -e .
+```
+
 After that, you can use either:
 
 ```bash

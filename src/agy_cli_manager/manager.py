@@ -27,6 +27,8 @@ MANAGED_PROFILE_FILES = (
 LOGIN_ARTIFACT_SETS = (
     ("antigravity-cli/antigravity-oauth-token",),
 )
+KEYRING_SERVICE = "gemini"
+KEYRING_ACCOUNT = "antigravity"
 EMAIL_PATTERN = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 APPLY_AUTH_EMAIL_PATTERN = re.compile(r"applyAuthResult:\s+email=([^,\s]+)", re.IGNORECASE)
 DEFAULT_REFRESH_POLICY_SECONDS = 1800
@@ -430,10 +432,194 @@ def _copy_managed_profile_files(source: Path, target: Path) -> None:
             dst.unlink(missing_ok=True)
 
 
+def _load_keyring_token() -> dict | None:
+    try:
+        import keyring
+
+        secret = keyring.get_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
+        if secret:
+            try:
+                data = json.loads(secret)
+                if isinstance(data, dict) and "token" in data:
+                    return data
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    if sys.platform.startswith("linux") and shutil.which("secret-tool"):
+        for attr_key in ("username", "account"):
+            try:
+                proc = subprocess.run(
+                    ["secret-tool", "lookup", "service", KEYRING_SERVICE, attr_key, KEYRING_ACCOUNT],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    data = json.loads(proc.stdout.strip())
+                    if isinstance(data, dict) and "token" in data:
+                        return data
+            except Exception:
+                pass
+
+    if sys.platform == "darwin" and shutil.which("security"):
+        try:
+            proc = subprocess.run(
+                ["security", "find-generic-password", "-s", KEYRING_SERVICE, "-a", KEYRING_ACCOUNT, "-w"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                data = json.loads(proc.stdout.strip())
+                if isinstance(data, dict) and "token" in data:
+                    return data
+        except Exception:
+            pass
+
+    return None
+
+
+def _save_keyring_token(token_data: dict | str) -> bool:
+    token_str = json.dumps(token_data) if isinstance(token_data, dict) else str(token_data)
+
+    try:
+        import keyring
+
+        keyring.set_password(KEYRING_SERVICE, KEYRING_ACCOUNT, token_str)
+        return True
+    except Exception:
+        pass
+
+    if sys.platform.startswith("linux") and shutil.which("secret-tool"):
+        try:
+            proc = subprocess.run(
+                [
+                    "secret-tool",
+                    "store",
+                    f"--label=Password for '{KEYRING_ACCOUNT}' on '{KEYRING_SERVICE}'",
+                    "service",
+                    KEYRING_SERVICE,
+                    "username",
+                    KEYRING_ACCOUNT,
+                ],
+                input=token_str,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            if proc.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+    if sys.platform == "darwin" and shutil.which("security"):
+        try:
+            proc = subprocess.run(
+                [
+                    "security",
+                    "add-generic-password",
+                    "-U",
+                    "-s",
+                    KEYRING_SERVICE,
+                    "-a",
+                    KEYRING_ACCOUNT,
+                    "-w",
+                    token_str,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            if proc.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
+def _clear_keyring_token() -> bool:
+    try:
+        import keyring
+
+        keyring.delete_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
+    except Exception:
+        pass
+
+    if sys.platform.startswith("linux") and shutil.which("secret-tool"):
+        for attr_key in ("username", "account"):
+            try:
+                subprocess.run(
+                    ["secret-tool", "clear", "service", KEYRING_SERVICE, attr_key, KEYRING_ACCOUNT],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except Exception:
+                pass
+
+    if sys.platform == "darwin" and shutil.which("security"):
+        try:
+            subprocess.run(
+                ["security", "delete-generic-password", "-s", KEYRING_SERVICE, "-a", KEYRING_ACCOUNT],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except Exception:
+            pass
+
+    return True
+
+
+def _sync_keyring_to_home(target_home: Path) -> bool:
+    token_data = _load_keyring_token()
+    if not isinstance(token_data, dict) or not isinstance(token_data.get("token"), dict):
+        return False
+    token_path = _oauth_token_path(_resolve_home_source(target_home))
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        token_path.write_text(json.dumps(token_data, indent=2) + "\n", encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
+def _sync_home_to_keyring(source_home: Path) -> bool:
+    try:
+        data = _load_antigravity_token_state(_resolve_home_source(source_home))
+        return _save_keyring_token(data)
+    except Exception:
+        return False
+
+
+@contextmanager
+def _isolated_keyring_warmup(source_home: Path):
+    restore_keyring = _load_keyring_token()
+    _sync_home_to_keyring(source_home)
+    try:
+        yield
+    finally:
+        _sync_keyring_to_home(source_home)
+        if restore_keyring:
+            _save_keyring_token(restore_keyring)
+        else:
+            _clear_keyring_token()
+
+
 def _remove_managed_profile_files(target: Path) -> None:
     target.mkdir(parents=True, exist_ok=True)
     for name in MANAGED_PROFILE_FILES:
         (target / name).unlink(missing_ok=True)
+    _clear_keyring_token()
 
 
 def _copy_account_profile(source_dir: Path, target_home: Path) -> None:
@@ -570,6 +756,16 @@ def _project_id_path(home_root: Path) -> Path:
 def _load_antigravity_token_state(home_root: Path) -> dict:
     path = _oauth_token_path(home_root)
     data = _read_json_if_exists(path)
+    if isinstance(data, dict) and isinstance(data.get("token"), dict):
+        return data
+    keyring_data = _load_keyring_token()
+    if isinstance(keyring_data, dict) and isinstance(keyring_data.get("token"), dict):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(keyring_data, indent=2) + "\n", encoding="utf-8")
+        except Exception:
+            pass
+        return keyring_data
     if not isinstance(data, dict):
         raise ValueError(f"Antigravity token file not found or invalid: {path}")
     token = data.get("token")
@@ -1157,11 +1353,18 @@ def list_models(
         restore_root = Path(restore_root_str)
         restore_home = restore_root / "home"
         _copy_account_profile(runtime_home, restore_home)
+        restore_keyring = _load_keyring_token()
         try:
             _copy_account_profile(source_home, runtime_home)
+            _sync_home_to_keyring(source_home)
             models = _run_agy_models_command(runtime_home, agy_binary=agy_binary, timeout_seconds=timeout_seconds)
+            _sync_keyring_to_home(source_home)
         finally:
             _copy_account_profile(restore_home, runtime_home)
+            if restore_keyring:
+                _save_keyring_token(restore_keyring)
+            else:
+                _clear_keyring_token()
     return {
         "account": account_name,
         "source_home": str(source_home),
@@ -1204,7 +1407,8 @@ def refresh_account_usage(
             access_token = None
 
         if needs_warmup:
-            _run_agy_warmup(source_home, agy_binary, warmup_timeout_seconds)
+            with _isolated_keyring_warmup(source_home):
+                _run_agy_warmup(source_home, agy_binary, warmup_timeout_seconds)
             access_token = _extract_access_token(source_home)
 
         try:
@@ -1220,7 +1424,8 @@ def refresh_account_usage(
                 },
             )
         except PermissionError:
-            _run_agy_warmup(source_home, agy_binary, warmup_timeout_seconds)
+            with _isolated_keyring_warmup(source_home):
+                _run_agy_warmup(source_home, agy_binary, warmup_timeout_seconds)
             access_token = _extract_access_token(source_home)
             load_response = _cloudcode_request(
                 access_token,
@@ -1632,8 +1837,10 @@ def probe_profile_identity_via_usage(
         restore_root = Path(restore_root_str)
         restore_home = restore_root / "home"
         _copy_account_profile(runtime_home, restore_home)
+        restore_keyring = _load_keyring_token()
         try:
             _copy_account_profile(source_home, runtime_home)
+            _sync_home_to_keyring(source_home)
 
             env = os.environ.copy()
             env["HOME"] = str(runtime_home)
@@ -1653,6 +1860,7 @@ def probe_profile_identity_via_usage(
                 tail = "\n".join(output.splitlines()[-8:]) if output else "no output"
                 raise ValueError(f"agy /usage failed with exit code {proc.returncode}: {tail}")
 
+            _sync_keyring_to_home(source_home)
             match = EMAIL_PATTERN.search(output)
             if match:
                 return {
@@ -1666,6 +1874,10 @@ def probe_profile_identity_via_usage(
             }
         finally:
             _copy_account_profile(restore_home, runtime_home)
+            if restore_keyring:
+                _save_keyring_token(restore_keyring)
+            else:
+                _clear_keyring_token()
 
 
 def resolve_login_profile_identity(
@@ -1691,10 +1903,21 @@ def resolve_login_profile_identity(
 
 
 def profile_has_login_artifacts(profile_dir: Path) -> bool:
-    return any(
+    if any(
         all((profile_dir / name).is_file() for name in artifact_set)
         for artifact_set in LOGIN_ARTIFACT_SETS
-    )
+    ):
+        return True
+    try:
+        home_source = _resolve_home_source(profile_dir)
+        if _sync_keyring_to_home(home_source):
+            return any(
+                all((profile_dir / name).is_file() for name in artifact_set)
+                for artifact_set in LOGIN_ARTIFACT_SETS
+            )
+    except Exception:
+        pass
+    return False
 
 
 def _derive_health_status(paths: ManagerPaths, name: str, meta: dict) -> str:
@@ -1886,6 +2109,7 @@ def save_account_profile(paths: ManagerPaths, name: str, source_dir: Path, overw
     profile_source = _resolve_profile_source(source_dir)
     if not profile_source.exists() or not profile_source.is_dir():
         raise ValueError(f"Usable profile source not found in {source_dir}")
+    _sync_keyring_to_home(home_source)
     if not profile_has_login_artifacts(profile_source):
         raise ValueError(f"Profile source is missing required auth files: {profile_source}")
 
@@ -1948,6 +2172,7 @@ def import_current(paths: ManagerPaths, name: str, source_dir: Path | None = Non
         live_dir = source_dir or get_live_dir(state)
         if live_dir is None:
             raise ValueError("No source_dir provided and no live_dir configured.")
+        _sync_keyring_to_home(_resolve_home_source(live_dir))
     add_account(paths, name, live_dir)
 
 
@@ -1967,6 +2192,7 @@ def _sync_runtime_to_live_dir(paths: ManagerPaths, state: dict) -> None:
     if live_dir is None:
         return
     _copy_account_profile(paths.runtime_dir, live_dir.parent)
+    _sync_home_to_keyring(paths.runtime_dir)
 
 
 def switch_account(paths: ManagerPaths, name: str) -> str:
@@ -2509,76 +2735,90 @@ def login_account(
         state["live_dir"] = str(live_dir.resolve())
         save_state(paths, state)
 
-    runtime_home = live_dir.parent
-    runtime_home.mkdir(parents=True, exist_ok=True)
-    _remove_managed_profile_files(live_dir)
-
-    env = os.environ.copy()
-    env["HOME"] = str(runtime_home)
-    env["PATH"] = env.get("PATH", "/bin:/usr/bin:/usr/local/bin")
     try:
-        proc = subprocess.Popen(
-            [resolved_binary],
-            stdin=sys.stdin,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-            cwd=runtime_home,
-            env=env,
-            close_fds=True,
-        )
-    except FileNotFoundError as exc:
-        raise ValueError(f"agy binary not found: {resolved_binary}") from exc
+        runtime_home = live_dir.parent
+        runtime_home.mkdir(parents=True, exist_ok=True)
+        _remove_managed_profile_files(live_dir)
 
-    start_time = time.time()
-    print("Launching real agy login session.")
-    print("Complete onboarding/login there, then exit agy to save the profile.")
-    sys.stdout.flush()
-    try:
-        while True:
-            if proc.poll() is not None:
-                break
-            if time.time() - start_time > timeout_seconds:
+        env = os.environ.copy()
+        env["HOME"] = str(runtime_home)
+        env["PATH"] = env.get("PATH", "/bin:/usr/bin:/usr/local/bin")
+        try:
+            proc = subprocess.Popen(
+                [resolved_binary],
+                stdin=sys.stdin,
+                stdout=sys.stdout,
+                stderr=sys.stderr,
+                cwd=runtime_home,
+                env=env,
+                close_fds=True,
+            )
+        except FileNotFoundError as exc:
+            raise ValueError(f"agy binary not found: {resolved_binary}") from exc
+
+        start_time = time.time()
+        print("Launching real agy login session.")
+        print("Complete onboarding/login there, then exit agy to save the profile.")
+        sys.stdout.flush()
+        try:
+            while True:
+                if proc.poll() is not None:
+                    break
+                if time.time() - start_time > timeout_seconds:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                    raise ValueError(f"Login timed out after {timeout_seconds} seconds.")
+                time.sleep(0.2)
+        except KeyboardInterrupt:
+            if proc.poll() is None:
                 proc.terminate()
                 try:
                     proc.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-                raise ValueError(f"Login timed out after {timeout_seconds} seconds.")
-            time.sleep(0.2)
-    except KeyboardInterrupt:
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        raise
+            raise
 
-    if not live_dir.is_dir() or not profile_has_login_artifacts(live_dir):
-        raise ValueError("agy login did not produce a usable auth profile.")
+        _sync_keyring_to_home(runtime_home)
 
-    identity = resolve_login_profile_identity(live_dir, agy_binary=resolved_binary, live_dir=live_dir)
-    detected_name = identity.get("account_name")
-    # The caller's name is the stable profile label.  Keep detected identity
-    # as metadata so two profiles from the same or changing login identity do
-    # not collapse onto one storage directory.
-    storage_name = normalize_account_storage_name(name)
-    if detected_name and storage_name != name:
-        print(f"detected-account: {detected_name}")
-        print(f"storage-name: {storage_name}")
+        if not live_dir.is_dir() or not profile_has_login_artifacts(live_dir):
+            raise ValueError("agy login did not produce a usable auth profile.")
 
-    overwrite = False
-    if account_dir(paths, storage_name).exists():
-        prompt = f"Account '{storage_name}' already exists. Overwrite it? [y/N]: "
-        answer = input(prompt).strip().lower()
-        if answer not in {"y", "yes"}:
-            storage_name = next_available_account_name(paths, storage_name)
-            print(f"saving-as: {storage_name}")
-        else:
-            overwrite = True
+        identity = resolve_login_profile_identity(live_dir, agy_binary=resolved_binary, live_dir=live_dir)
+        detected_name = identity.get("account_name")
+        # The caller's name is the stable profile label.  Keep detected identity
+        # as metadata so two profiles from the same or changing login identity do
+        # not collapse onto one storage directory.
+        storage_name = normalize_account_storage_name(name)
+        if detected_name and storage_name != name:
+            print(f"detected-account: {detected_name}")
+            print(f"storage-name: {storage_name}")
 
-    save_account_profile(paths, storage_name, runtime_home, overwrite=overwrite)
-    return storage_name
+        overwrite = False
+        if account_dir(paths, storage_name).exists():
+            prompt = f"Account '{storage_name}' already exists. Overwrite it? [y/N]: "
+            answer = input(prompt).strip().lower()
+            if answer not in {"y", "yes"}:
+                storage_name = next_available_account_name(paths, storage_name)
+                print(f"saving-as: {storage_name}")
+            else:
+                overwrite = True
+
+        save_account_profile(paths, storage_name, runtime_home, overwrite=overwrite)
+        return storage_name
+
+    finally:
+        with manager_lock(paths):
+            state = sync_state_from_disk(paths, load_state(paths))
+            active = state.get("active")
+            if active:
+                try:
+                    _copy_active_runtime(paths, active)
+                    _sync_runtime_to_live_dir(paths, state)
+                except Exception:
+                    pass
 
 
 def format_status(paths: ManagerPaths) -> str:

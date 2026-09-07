@@ -838,7 +838,7 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
             {"key": "name", "title": "Name", "width": 30},
             {"key": "state", "title": "State", "width": 11},
             {"key": "issue", "title": "Issue", "width": 7},
-            {"key": "usage", "title": "Usage", "width": 12},
+            {"key": "usage", "title": "Remaining", "width": 12},
             {"key": "reset", "title": "Reset In", "width": 12},
             {"key": "next", "title": "Next Ref", "width": 9},
             {"key": "fail", "title": "Fail", "width": 5, "align": "right"},
@@ -850,7 +850,7 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
             {"key": "name", "title": "Name", "width": 24},
             {"key": "state", "title": "State", "width": 10},
             {"key": "issue", "title": "Issue", "width": 7},
-            {"key": "usage", "title": "Usage", "width": 11},
+            {"key": "usage", "title": "Remaining", "width": 11},
             {"key": "reset", "title": "Reset In", "width": 10},
             {"key": "next", "title": "Next", "width": 8},
             {"key": "fail", "title": "Fail", "width": 4, "align": "right"},
@@ -860,7 +860,7 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
         {"key": "name", "title": "Name", "width": 22},
         {"key": "state", "title": "State", "width": 8},
         {"key": "issue", "title": "Issue", "width": 6},
-        {"key": "usage", "title": "Usage", "width": 9},
+        {"key": "usage", "title": "Remaining", "width": 9},
         {"key": "reset", "title": "Reset", "width": 8},
         {"key": "next", "title": "Next", "width": 7},
     ]
@@ -1253,7 +1253,10 @@ def _dashboard_import(paths) -> str:
 
 def _proxy_dashboard(stdscr, paths) -> int:
     _init_dashboard_colors()
-    curses.curs_set(0)
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
     stdscr.nodelay(True)
     stdscr.keypad(True)
     selected_idx = 0
@@ -1345,7 +1348,10 @@ def _proxy_dashboard(stdscr, paths) -> int:
 
 def _dashboard(stdscr, paths) -> int:
     _init_dashboard_colors()
-    curses.curs_set(0)
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
     stdscr.nodelay(True)
     stdscr.keypad(True)
 
@@ -1430,6 +1436,9 @@ def _dashboard(stdscr, paths) -> int:
         )
         top_lines = _draw_wrapped_lines(stdscr, 0, top, _color_attr(COLOR_HEADER, curses.A_BOLD))
         action_y = top_lines
+        if not snapshot.get('active'):
+            _draw_segments(stdscr, action_y, [(" [!] CRITICAL: NO ACTIVE ACCOUNT (All standby accounts exhausted) ", _severity_attr("bad", bold=True))])
+            action_y += 1
         action_lines = _draw_action_bar(stdscr, action_y)
         legend_y = action_y + action_lines
         legend_lines = _draw_legend(stdscr, legend_y)
@@ -1451,7 +1460,7 @@ def _dashboard(stdscr, paths) -> int:
             if compact_detail_mode:
                 overview_rows = [
                     ("Account", selected_name, _selected_name_attr(selected_meta.get("status", "standby"), True)),
-                    ("Usage", _format_usage(selected_meta), _usage_attr(selected_meta)),
+                    ("Remaining", _format_usage(selected_meta), _usage_attr(selected_meta)),
                     ("Quota", f"{_format_window_summary(selected_meta, 'short', now_dt)} | {_format_window_summary(selected_meta, 'weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                     ("Problem", f"{verification.get('problem_status') or '-'} | {verification.get('recommended_action') or '-'}", _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
                     ("Issues", problem_summary.removeprefix("Issues: "), _problem_summary_attr(problem_counts)),
@@ -1460,7 +1469,7 @@ def _dashboard(stdscr, paths) -> int:
                 overview_rows = [
                     ("Account", selected_name, _selected_name_attr(selected_meta.get("status", "standby"), True)),
                     ("Health", _format_live_state(selected_meta, now_dt), _detail_value_attr(selected_meta, "Health", now_dt)),
-                    ("Usage", _format_usage(selected_meta), _usage_attr(selected_meta)),
+                    ("Remaining", _format_usage(selected_meta), _usage_attr(selected_meta)),
                     ("Issues", problem_summary.removeprefix("Issues: "), _problem_summary_attr(problem_counts)),
                     ("Identity", _format_identity(selected_meta), _detail_value_attr(selected_meta, "Identity", now_dt)),
                     ("Mode", f"{selected_meta.get('status', 'standby')} | {'enabled' if selected_meta.get('enabled', True) else 'disabled'}", _detail_value_attr(selected_meta, "State", now_dt)),
@@ -1475,7 +1484,7 @@ def _dashboard(stdscr, paths) -> int:
                 overview_rows = [
                     ("Account", selected_name, _selected_name_attr(selected_meta.get("status", "standby"), True)),
                     ("Health", _format_live_state(selected_meta, now_dt), _detail_value_attr(selected_meta, "Health", now_dt)),
-                    ("Usage", _format_usage(selected_meta), _usage_attr(selected_meta)),
+                    ("Remaining", _format_usage(selected_meta), _usage_attr(selected_meta)),
                     ("Issues", problem_summary.removeprefix("Issues: "), _problem_summary_attr(problem_counts)),
                     ("Mode", f"{selected_meta.get('status', 'standby')} | {'enabled' if selected_meta.get('enabled', True) else 'disabled'}", _detail_value_attr(selected_meta, "State", now_dt)),
                     ("Next Refresh", _format_next_refresh(selected_meta, now_dt), _detail_value_attr(selected_meta, "Next Refresh", now_dt)),
@@ -1520,6 +1529,7 @@ def _dashboard(stdscr, paths) -> int:
         _draw_hline(stdscr, overview_top - 1, "=")
         _safe_addstr(stdscr, overview_top, 0, "Overview", _color_attr(COLOR_SECTION, curses.A_BOLD))
         overview_y = overview_top + 1
+        overview_label_width = max((len(label) for label, _, _ in overview_rows), default=0)
         for idx, (label, value, value_attr) in enumerate(overview_rows):
             _draw_labeled_value_cell(
                 stdscr,
@@ -1529,7 +1539,7 @@ def _dashboard(stdscr, paths) -> int:
                 label,
                 value,
                 value_attr,
-                label_width=8,
+                label_width=overview_label_width,
             )
 
         _draw_hline(stdscr, height - 2, "=")

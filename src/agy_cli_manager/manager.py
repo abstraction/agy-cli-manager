@@ -918,39 +918,43 @@ def _parse_summary_bucket(bucket: dict) -> dict:
     }
 
 
-def _select_quota_summary_group(summary_response: dict) -> dict | None:
+def _parse_quota_windows_from_summary(summary_response: dict) -> tuple[dict, dict, int]:
     groups = summary_response.get("groups")
     if not isinstance(groups, list):
-        return None
-    normalized = [group for group in groups if isinstance(group, dict)]
-    if not normalized:
-        return None
-    for group in normalized:
-        display_name = group.get("displayName")
-        if isinstance(display_name, str) and "gemini" in display_name.lower():
-            return group
-    return normalized[0]
-
-
-def _parse_quota_windows_from_summary(summary_response: dict) -> tuple[dict, dict, int]:
-    group = _select_quota_summary_group(summary_response)
-    if not isinstance(group, dict):
         return _default_usage_window(), _default_usage_window(), 0
-    buckets = group.get("buckets")
-    if not isinstance(buckets, list):
+    
+    normalized_groups = [group for group in groups if isinstance(group, dict)]
+    if not normalized_groups:
         return _default_usage_window(), _default_usage_window(), 0
 
-    short_window = _default_usage_window()
-    weekly_window = _default_usage_window()
-    for bucket in buckets:
-        if not isinstance(bucket, dict):
+    best_short = None
+    best_weekly = None
+    total_buckets = 0
+
+    for group in normalized_groups:
+        buckets = group.get("buckets")
+        if not isinstance(buckets, list):
             continue
-        window_name = bucket.get("window")
-        if window_name == "5h":
-            short_window = _parse_summary_bucket(bucket)
-        elif window_name == "weekly":
-            weekly_window = _parse_summary_bucket(bucket)
-    return short_window, weekly_window, len(buckets)
+            
+        for bucket in buckets:
+            if not isinstance(bucket, dict):
+                continue
+            total_buckets += 1
+            window_name = bucket.get("window")
+            parsed = _parse_summary_bucket(bucket)
+            
+            if window_name == "5h":
+                if best_short is None or (parsed["value"] is not None and (best_short["value"] is None or parsed["value"] < best_short["value"])):
+                    best_short = parsed
+            elif window_name == "weekly":
+                if best_weekly is None or (parsed["value"] is not None and (best_weekly["value"] is None or parsed["value"] < best_weekly["value"])):
+                    best_weekly = parsed
+
+    return (
+        best_short or _default_usage_window(), 
+        best_weekly or _default_usage_window(), 
+        total_buckets
+    )
 
 
 def _resolve_usage_refresh_target(paths: ManagerPaths, state: dict, name: str | None) -> tuple[str, Path]:
@@ -2205,7 +2209,10 @@ def switch_account(paths: ManagerPaths, name: str) -> str:
             raise ValueError(f"Account is disabled: {name}")
         cooldown_until = parse_timestamp(meta.get("cooldown_until"))
         if cooldown_until and cooldown_until > utc_now():
-            raise ValueError(f"Account is in cooldown until {cooldown_until.isoformat()}: {name}")
+            meta["cooldown_until"] = None
+            meta["last_error"] = None
+            meta["refresh_fail_count"] = 0
+            meta["last_live_check_error"] = None
 
         previous = state.get("active")
         _copy_active_runtime(paths, name)

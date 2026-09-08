@@ -112,6 +112,17 @@ def build_parser() -> argparse.ArgumentParser:
     refresh_due.add_argument("--agy-binary")
     refresh_due.add_argument("--warmup-timeout-seconds", type=int, default=45)
     refresh_due.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    refresh_all = sub.add_parser("refresh-all", help="Refresh quota for all accounts sequentially with a delay to avoid rate limits")
+    refresh_all.add_argument("--agy-binary")
+    refresh_all.add_argument("--warmup-timeout-seconds", type=int, default=45)
+    refresh_all.add_argument("--delay-seconds", type=float, default=3.0, help="Seconds to wait between each account refresh (default: 3)")
+    refresh_all.add_argument("--include", nargs="*", metavar="NAME", help="Only refresh these named accounts")
+    refresh_all.add_argument("--exclude", nargs="*", metavar="NAME", help="Skip these named accounts")
+    refresh_all.add_argument("--skip-disabled", action="store_true", default=True, help="Skip disabled accounts (default: on)")
+    refresh_all.add_argument("--no-skip-disabled", dest="skip_disabled", action="store_false", help="Include disabled accounts")
+    refresh_all.add_argument("--skip-exhausted", action="store_true", help="Skip accounts whose short window is known to be at 0%% (already at limit)")
+    refresh_all.add_argument("--json", action="store_true", help="Print machine-readable JSON summary")
+
     models = sub.add_parser("models", help="List available models for the active or named account")
     models.add_argument("name", nargs="?")
     models.add_argument("--agy-binary")
@@ -2130,6 +2141,113 @@ def main() -> int:
                     f"reset_at={result.short_reset_at or '-'} buckets={result.bucket_count}"
                 )
             return 0
+        if args.command == "refresh-all":
+            snapshot = get_status_snapshot(paths)
+            all_names = sorted(snapshot["accounts"].keys())
+            active_name = snapshot.get("active")
+
+            # Build ordered list: active account first, then the rest alphabetically
+            ordered = ([active_name] if active_name and active_name in all_names else []) + [
+                n for n in all_names if n != active_name
+            ]
+
+            include_set = set(args.include) if args.include else None
+            exclude_set = set(args.exclude) if args.exclude else set()
+
+            to_refresh: list[str] = []
+            skipped: list[dict] = []
+            for name in ordered:
+                meta = snapshot["accounts"].get(name, {})
+                if include_set is not None and name not in include_set:
+                    skipped.append({"account": name, "reason": "not_in_include"})
+                    continue
+                if name in exclude_set:
+                    skipped.append({"account": name, "reason": "excluded"})
+                    continue
+                if args.skip_disabled and not meta.get("enabled", True):
+                    skipped.append({"account": name, "reason": "disabled"})
+                    if not args.json:
+                        print(f"skip [{name}]: disabled")
+                    continue
+                if args.skip_exhausted:
+                    windows = meta.get("usage_windows") if isinstance(meta.get("usage_windows"), dict) else {}
+                    short = windows.get("short") if isinstance(windows.get("short"), dict) else {}
+                    short_val = short.get("value")
+                    if isinstance(short_val, (int, float)) and short_val <= 0:
+                        skipped.append({"account": name, "reason": "exhausted"})
+                        if not args.json:
+                            print(f"skip [{name}]: short window exhausted (0%)")
+                        continue
+                to_refresh.append(name)
+
+            results: list[dict] = []
+            errors: list[dict] = []
+            for idx, name in enumerate(to_refresh):
+                if idx > 0 and args.delay_seconds > 0:
+                    if not args.json:
+                        print(f"  waiting {args.delay_seconds:.0f}s...", flush=True)
+                    time.sleep(args.delay_seconds)
+                if not args.json:
+                    print(f"[{idx + 1}/{len(to_refresh)}] refreshing {name}...", end=" ", flush=True)
+                try:
+                    result = refresh_account_usage(
+                        paths,
+                        name,
+                        agy_binary=args.agy_binary,
+                        warmup_timeout_seconds=args.warmup_timeout_seconds,
+                    )
+                    g_short = result.gemini_short_value
+                    g_weekly = result.gemini_weekly_value
+                    c_short = result.claude_short_value
+                    c_weekly = result.claude_weekly_value
+                    has_groups = any(v is not None for v in (g_short, g_weekly, c_short, c_weekly))
+                    if not args.json:
+                        if has_groups:
+                            g_s = "-" if g_short is None else f"{g_short:.0f}%"
+                            g_w = "-" if g_weekly is None else f"{g_weekly:.0f}%"
+                            c_s = "-" if c_short is None else f"{c_short:.0f}%"
+                            c_w = "-" if c_weekly is None else f"{c_weekly:.0f}%"
+                            print(f"ok  G:{g_s}/{g_w} C:{c_s}/{c_w}")
+                        else:
+                            short_val = "-" if result.short_usage_value is None else f"{result.short_usage_value:.0f}%"
+                            weekly_val = "-" if result.weekly_usage_value is None else f"{result.weekly_usage_value:.0f}%"
+                            print(f"ok  {short_val}/{weekly_val}")
+                    results.append({
+                        "account": name,
+                        "ok": True,
+                        "short_usage_value": result.short_usage_value,
+                        "weekly_usage_value": result.weekly_usage_value,
+                        "gemini_short_value": result.gemini_short_value,
+                        "gemini_weekly_value": result.gemini_weekly_value,
+                        "claude_short_value": result.claude_short_value,
+                        "claude_weekly_value": result.claude_weekly_value,
+                        "bucket_count": result.bucket_count,
+                    })
+                except Exception as exc:
+                    err_msg = str(exc)
+                    if not args.json:
+                        print(f"err {err_msg[:80]}")
+                    errors.append({"account": name, "ok": False, "error": err_msg})
+                    results.append({"account": name, "ok": False, "error": err_msg})
+
+            if args.json:
+                print(json.dumps({
+                    "refreshed": [r for r in results if r.get("ok")],
+                    "failed": errors,
+                    "skipped": skipped,
+                    "total": len(to_refresh),
+                    "ok_count": len(results) - len(errors),
+                    "error_count": len(errors),
+                    "skip_count": len(skipped),
+                }, indent=2, sort_keys=True))
+            else:
+                ok_count = len(results) - len(errors)
+                print(
+                    f"\nrefresh-all done: {ok_count}/{len(to_refresh)} ok"
+                    + (f", {len(errors)} failed" if errors else "")
+                    + (f", {len(skipped)} skipped" if skipped else "")
+                )
+            return 1 if errors else 0
         if args.command == "models":
             payload = list_models(
                 paths,

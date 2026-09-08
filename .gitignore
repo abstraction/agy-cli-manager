@@ -6,3 +6,10 @@ build/
 *.egg-info/
 .DS_Store
 AGENTS.md
+
+# Local state & IDE
+.agy-cli-manager/
+.specstory/
+
+# Scratch scripts
+patch_*.py

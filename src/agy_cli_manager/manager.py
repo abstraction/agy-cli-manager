@@ -37,7 +37,7 @@ KEYRING_ACCOUNT = "antigravity"
 EMAIL_PATTERN = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 APPLY_AUTH_EMAIL_PATTERN = re.compile(r"applyAuthResult:\s+email=([^,\s]+)", re.IGNORECASE)
 DEFAULT_REFRESH_POLICY_SECONDS = 1800
-USAGE_WINDOW_NAMES = ("short", "weekly")
+USAGE_WINDOW_NAMES = ("short", "weekly", "gemini_short", "gemini_weekly", "claude_short", "claude_weekly")
 DEFAULT_SWITCH_MODE = "auto"
 VALID_SWITCH_MODES = ("auto", "manual")
 DEFAULT_REFRESH_FAILURE_SWITCH_THRESHOLD = 2
@@ -89,6 +89,19 @@ class UsageRefreshResult:
     weekly_usage_value: float | None
     weekly_reset_at: str | None
     bucket_count: int
+    # Per-group windows (Gemini and Claude/GPT separately)
+    gemini_short_status: str = "unknown"
+    gemini_short_value: float | None = None
+    gemini_short_reset_at: str | None = None
+    gemini_weekly_status: str = "unknown"
+    gemini_weekly_value: float | None = None
+    gemini_weekly_reset_at: str | None = None
+    claude_short_status: str = "unknown"
+    claude_short_value: float | None = None
+    claude_short_reset_at: str | None = None
+    claude_weekly_status: str = "unknown"
+    claude_weekly_value: float | None = None
+    claude_weekly_reset_at: str | None = None
 
 
 @dataclass
@@ -942,42 +955,81 @@ def _parse_summary_bucket(bucket: dict) -> dict:
     }
 
 
-def _parse_quota_windows_from_summary(summary_response: dict) -> tuple[dict, dict, int]:
+def _classify_bucket_group(bucket: dict) -> str:
+    """Return 'gemini' if this bucket belongs to the Gemini group, 'claude' otherwise."""
+    bucket_id = str(bucket.get("bucketId") or "").lower()
+    if bucket_id.startswith("gemini"):
+        return "gemini"
+    # '3p-*' buckets are Claude/GPT models
+    return "claude"
+
+
+def _parse_quota_windows_from_summary(
+    summary_response: dict,
+) -> tuple[dict, dict, dict, dict, dict, dict, int]:
+    """Return (short, weekly, gemini_short, gemini_weekly, claude_short, claude_weekly, total_buckets)."""
     groups = summary_response.get("groups")
     if not isinstance(groups, list):
-        return _default_usage_window(), _default_usage_window(), 0
-    
+        dw = _default_usage_window()
+        return dw, dw, dw, dw, dw, dw, 0
+
     normalized_groups = [group for group in groups if isinstance(group, dict)]
     if not normalized_groups:
-        return _default_usage_window(), _default_usage_window(), 0
+        dw = _default_usage_window()
+        return dw, dw, dw, dw, dw, dw, 0
 
     best_short = None
     best_weekly = None
+    gemini_short = None
+    gemini_weekly = None
+    claude_short = None
+    claude_weekly = None
     total_buckets = 0
 
     for group in normalized_groups:
         buckets = group.get("buckets")
         if not isinstance(buckets, list):
             continue
-            
+
         for bucket in buckets:
             if not isinstance(bucket, dict):
                 continue
             total_buckets += 1
             window_name = bucket.get("window")
             parsed = _parse_summary_bucket(bucket)
-            
-            if window_name == "5h":
-                if best_short is None or (parsed["value"] is not None and (best_short["value"] is None or parsed["value"] < best_short["value"])):
-                    best_short = parsed
-            elif window_name == "weekly":
-                if best_weekly is None or (parsed["value"] is not None and (best_weekly["value"] is None or parsed["value"] < best_weekly["value"])):
-                    best_weekly = parsed
+            group_key = _classify_bucket_group(bucket)
 
+            def _pick_best(current: dict | None, candidate: dict) -> dict:
+                if current is None:
+                    return candidate
+                if candidate["value"] is not None and (
+                    current["value"] is None or candidate["value"] < current["value"]
+                ):
+                    return candidate
+                return current
+
+            if window_name == "5h":
+                best_short = _pick_best(best_short, parsed)
+                if group_key == "gemini":
+                    gemini_short = _pick_best(gemini_short, parsed)
+                else:
+                    claude_short = _pick_best(claude_short, parsed)
+            elif window_name == "weekly":
+                best_weekly = _pick_best(best_weekly, parsed)
+                if group_key == "gemini":
+                    gemini_weekly = _pick_best(gemini_weekly, parsed)
+                else:
+                    claude_weekly = _pick_best(claude_weekly, parsed)
+
+    dw = _default_usage_window()
     return (
-        best_short or _default_usage_window(), 
-        best_weekly or _default_usage_window(), 
-        total_buckets
+        best_short or dw,
+        best_weekly or dw,
+        gemini_short or dw,
+        gemini_weekly or dw,
+        claude_short or dw,
+        claude_weekly or dw,
+        total_buckets,
     )
 
 
@@ -1472,7 +1524,15 @@ def refresh_account_usage(
             raise ValueError("Cloud Code project id is unavailable.")
 
         quota_response = _cloudcode_request(access_token, CODE_ASSIST_QUOTA_SUMMARY_PATH, {"project": project_id})
-        short_window, weekly_window, bucket_count = _parse_quota_windows_from_summary(quota_response)
+        (
+            short_window,
+            weekly_window,
+            gemini_short_window,
+            gemini_weekly_window,
+            claude_short_window,
+            claude_weekly_window,
+            bucket_count,
+        ) = _parse_quota_windows_from_summary(quota_response)
         plan_info = load_response.get("planInfo")
         plan_type = plan_info.get("planType") if isinstance(plan_info, dict) else None
         monthly = plan_info.get("monthlyPromptCredits") if isinstance(plan_info, dict) else None
@@ -1492,6 +1552,18 @@ def refresh_account_usage(
             weekly_usage_value=weekly_window.get("value"),
             weekly_reset_at=weekly_window.get("reset_at"),
             bucket_count=bucket_count,
+            gemini_short_status=gemini_short_window.get("status", "unknown"),
+            gemini_short_value=gemini_short_window.get("value"),
+            gemini_short_reset_at=gemini_short_window.get("reset_at"),
+            gemini_weekly_status=gemini_weekly_window.get("status", "unknown"),
+            gemini_weekly_value=gemini_weekly_window.get("value"),
+            gemini_weekly_reset_at=gemini_weekly_window.get("reset_at"),
+            claude_short_status=claude_short_window.get("status", "unknown"),
+            claude_short_value=claude_short_window.get("value"),
+            claude_short_reset_at=claude_short_window.get("reset_at"),
+            claude_weekly_status=claude_weekly_window.get("status", "unknown"),
+            claude_weekly_value=claude_weekly_window.get("value"),
+            claude_weekly_reset_at=claude_weekly_window.get("reset_at"),
         )
 
         refreshed_at = utc_now()
@@ -1526,6 +1598,18 @@ def refresh_account_usage(
             windows["weekly"]["status"] = result.weekly_usage_status
             windows["weekly"]["value"] = result.weekly_usage_value
             windows["weekly"]["reset_at"] = result.weekly_reset_at
+            windows["gemini_short"]["status"] = result.gemini_short_status
+            windows["gemini_short"]["value"] = result.gemini_short_value
+            windows["gemini_short"]["reset_at"] = result.gemini_short_reset_at
+            windows["gemini_weekly"]["status"] = result.gemini_weekly_status
+            windows["gemini_weekly"]["value"] = result.gemini_weekly_value
+            windows["gemini_weekly"]["reset_at"] = result.gemini_weekly_reset_at
+            windows["claude_short"]["status"] = result.claude_short_status
+            windows["claude_short"]["value"] = result.claude_short_value
+            windows["claude_short"]["reset_at"] = result.claude_short_reset_at
+            windows["claude_weekly"]["status"] = result.claude_weekly_status
+            windows["claude_weekly"]["value"] = result.claude_weekly_value
+            windows["claude_weekly"]["reset_at"] = result.claude_weekly_reset_at
             meta["usage_windows"] = windows
             meta["health_status"] = "healthy"
             meta["last_live_check_at"] = _normalize_timestamp(refreshed_at)
@@ -1534,6 +1618,13 @@ def refresh_account_usage(
             policy_seconds = int(meta.get("refresh_policy_seconds", DEFAULT_REFRESH_POLICY_SECONDS) or DEFAULT_REFRESH_POLICY_SECONDS)
             meta["next_live_check_at"] = _normalize_timestamp(refreshed_at + timedelta(seconds=policy_seconds))
             meta["identity"] = refreshed_identity
+            # Auto-clear cooldown when fresh quota confirms the short window is above the
+            # exhaustion threshold — the account has recovered and no longer needs to sit out.
+            cooldown_until = parse_timestamp(meta.get("cooldown_until"))
+            if cooldown_until and cooldown_until > utc_now():
+                short_val = result.short_usage_value
+                if short_val is not None and short_val > DEFAULT_SHORT_SWITCH_THRESHOLD_PERCENT:
+                    meta["cooldown_until"] = None
             _sync_legacy_usage_fields(meta)
             save_state(paths, state)
 

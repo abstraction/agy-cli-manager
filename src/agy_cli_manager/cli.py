@@ -546,6 +546,12 @@ def _usage_window_values(meta: dict) -> tuple[float | None, float | None]:
     return short_value, weekly_value
 
 
+def _get_group_window(meta: dict, key: str) -> dict:
+    windows = meta.get("usage_windows") if isinstance(meta.get("usage_windows"), dict) else {}
+    w = windows.get(key)
+    return w if isinstance(w, dict) else {}
+
+
 def _usage_attr(meta: dict, selected: bool = False) -> int:
     values = [value for value in _usage_window_values(meta) if value is not None]
     remaining = min(values) if values else None
@@ -855,36 +861,45 @@ def _draw_detail_block(
 
 
 def _account_table_layout(width: int) -> list[dict[str, str | int]]:
-    if width >= 116:
+    if width >= 160:
         return [
             {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
-            {"key": "name", "title": "Name", "width": 30},
+            {"key": "name", "title": "Name", "width": 26},
             {"key": "state", "title": "State", "width": 11},
             {"key": "issue", "title": "Issue", "width": 7},
-            {"key": "usage", "title": "Remaining", "width": 12},
-            {"key": "reset", "title": "Reset In", "width": 12},
+            {"key": "usage", "title": "Remaining", "width": 26},
+            {"key": "reset", "title": "Reset In", "width": 22},
             {"key": "next", "title": "Next Ref", "width": 9},
             {"key": "fail", "title": "Fail", "width": 5, "align": "right"},
             {"key": "error", "title": "Last Error", "width": 18},
         ]
+    if width >= 130:
+        return [
+            {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
+            {"key": "name", "title": "Name", "width": 20},
+            {"key": "state", "title": "State", "width": 10},
+            {"key": "issue", "title": "Issue", "width": 7},
+            {"key": "usage", "title": "Remaining", "width": 26},
+            {"key": "reset", "title": "Reset In", "width": 22},
+            {"key": "next", "title": "Next", "width": 8},
+            {"key": "fail", "title": "Fail", "width": 4, "align": "right"},
+        ]
     if width >= 96:
         return [
             {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
-            {"key": "name", "title": "Name", "width": 24},
+            {"key": "name", "title": "Name", "width": 16},
             {"key": "state", "title": "State", "width": 10},
             {"key": "issue", "title": "Issue", "width": 7},
-            {"key": "usage", "title": "Remaining", "width": 11},
-            {"key": "reset", "title": "Reset In", "width": 10},
+            {"key": "usage", "title": "Remaining", "width": 26},
             {"key": "next", "title": "Next", "width": 8},
             {"key": "fail", "title": "Fail", "width": 4, "align": "right"},
         ]
     return [
         {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
-        {"key": "name", "title": "Name", "width": 22},
+        {"key": "name", "title": "Name", "width": 14},
         {"key": "state", "title": "State", "width": 8},
         {"key": "issue", "title": "Issue", "width": 6},
-        {"key": "usage", "title": "Remaining", "width": 9},
-        {"key": "reset", "title": "Reset", "width": 8},
+        {"key": "usage", "title": "Remaining", "width": 16},
         {"key": "next", "title": "Next", "width": 7},
     ]
 
@@ -1029,6 +1044,18 @@ def _parse_iso_timestamp(value: str | None) -> datetime | None:
 
 
 def _format_usage(meta: dict) -> str:
+    g_short = _get_group_window(meta, "gemini_short")
+    g_weekly = _get_group_window(meta, "gemini_weekly")
+    c_short = _get_group_window(meta, "claude_short")
+    c_weekly = _get_group_window(meta, "claude_weekly")
+    has_gemini = g_short.get("status", "unknown") != "unknown" or g_weekly.get("status", "unknown") != "unknown"
+    has_claude = c_short.get("status", "unknown") != "unknown" or c_weekly.get("status", "unknown") != "unknown"
+    if has_gemini and has_claude:
+        return (
+            f"G:{_format_usage_value(g_short)}/{_format_usage_value(g_weekly)}"
+            f" C:{_format_usage_value(c_short)}/{_format_usage_value(c_weekly)}"
+        )
+    # Fall back to combined short/weekly when per-group data not yet fetched
     windows = meta.get("usage_windows") if isinstance(meta.get("usage_windows"), dict) else {}
     short = windows.get("short") if isinstance(windows.get("short"), dict) else {}
     weekly = windows.get("weekly") if isinstance(windows.get("weekly"), dict) else {}
@@ -1036,6 +1063,18 @@ def _format_usage(meta: dict) -> str:
 
 
 def _format_countdown(meta: dict, now: datetime) -> str:
+    g_short = _get_group_window(meta, "gemini_short")
+    g_weekly = _get_group_window(meta, "gemini_weekly")
+    c_short = _get_group_window(meta, "claude_short")
+    c_weekly = _get_group_window(meta, "claude_weekly")
+    has_gemini = g_short.get("status", "unknown") != "unknown" or g_weekly.get("status", "unknown") != "unknown"
+    has_claude = c_short.get("status", "unknown") != "unknown" or c_weekly.get("status", "unknown") != "unknown"
+    if has_gemini and has_claude:
+        return (
+            f"G:{_format_reset_value(g_short, now)}/{_format_reset_value(g_weekly, now)}"
+            f" C:{_format_reset_value(c_short, now)}/{_format_reset_value(c_weekly, now)}"
+        )
+    # Fall back to combined short/weekly
     windows = meta.get("usage_windows") if isinstance(meta.get("usage_windows"), dict) else {}
     short = windows.get("short") if isinstance(windows.get("short"), dict) else {}
     weekly = windows.get("weekly") if isinstance(windows.get("weekly"), dict) else {}

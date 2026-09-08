@@ -1113,16 +1113,31 @@ def _eligible_switch_candidates(state: dict, exclude: str | None = None) -> list
 def _is_short_window_exhausted(meta: dict, now: datetime | None = None, *, threshold_percent: float = DEFAULT_SHORT_SWITCH_THRESHOLD_PERCENT) -> bool:
     current = now or utc_now()
     windows = _normalize_usage_windows(meta)
-    short = windows.get("short", {})
-    if short.get("status") != "known":
-        return False
-    value = _coerce_usage_value(short.get("value"))
-    if value is None or value > threshold_percent:
-        return False
-    reset_at = parse_timestamp(short.get("reset_at"))
-    if reset_at is not None and reset_at <= current:
-        return False
-    return True
+    
+    def _is_exhausted(w: dict) -> bool:
+        if w.get("status") != "known":
+            return False
+        val = _coerce_usage_value(w.get("value"))
+        if val is None or val > threshold_percent:
+            return False
+        reset = parse_timestamp(w.get("reset_at"))
+        if reset is not None and reset <= current:
+            return False
+        return True
+
+    gemini = windows.get("gemini_short", {})
+    claude = windows.get("claude_short", {})
+    
+    # Check if we have valid statuses. If an endpoint isn't known, we assume it's NOT exhausted.
+    g_ex = _is_exhausted(gemini) if gemini.get("status") == "known" else True
+    c_ex = _is_exhausted(claude) if claude.get("status") == "known" else True
+    
+    # If both are unknown, fallback to overall short
+    if gemini.get("status") != "known" and claude.get("status") != "known":
+        return _is_exhausted(windows.get("short", {}))
+        
+    # An account is only truly completely exhausted if BOTH major model pools are exhausted
+    return g_ex and c_ex
 
 
 def _cooldown_minutes_from_short_window(meta: dict, now: datetime | None = None) -> int:
@@ -1622,8 +1637,7 @@ def refresh_account_usage(
             # exhaustion threshold — the account has recovered and no longer needs to sit out.
             cooldown_until = parse_timestamp(meta.get("cooldown_until"))
             if cooldown_until and cooldown_until > utc_now():
-                short_val = result.short_usage_value
-                if short_val is not None and short_val > DEFAULT_SHORT_SWITCH_THRESHOLD_PERCENT:
+                if not _is_short_window_exhausted(meta, now=utc_now()):
                     meta["cooldown_until"] = None
             _sync_legacy_usage_fields(meta)
             save_state(paths, state)

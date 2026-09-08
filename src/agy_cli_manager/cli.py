@@ -1538,6 +1538,8 @@ def _dashboard(stdscr, paths) -> int:
                     ("Account", selected_name, _selected_name_attr(selected_meta.get("status", "standby"), True)),
                     ("Remaining", _format_usage(selected_meta), _usage_attr(selected_meta)),
                     ("Quota", f"{_format_window_summary(selected_meta, 'short', now_dt)} | {_format_window_summary(selected_meta, 'weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
+                                        ("Gemini Quota", f"Short: {_format_window_summary(selected_meta, 'gemini_short', now_dt)} | Weekly: {_format_window_summary(selected_meta, 'gemini_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
+                    ("Claude Quota", f"Short: {_format_window_summary(selected_meta, 'claude_short', now_dt)} | Weekly: {_format_window_summary(selected_meta, 'claude_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                     ("Problem", f"{verification.get('problem_status') or '-'} | {verification.get('recommended_action') or '-'}", _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
                     ("Issues", problem_summary.removeprefix("Issues: "), _problem_summary_attr(problem_counts)),
                 ]
@@ -1551,8 +1553,8 @@ def _dashboard(stdscr, paths) -> int:
                     ("Mode", f"{selected_meta.get('status', 'standby')} | {'enabled' if selected_meta.get('enabled', True) else 'disabled'}", _detail_value_attr(selected_meta, "State", now_dt)),
                     ("Failures", str(int(selected_meta.get('fail_count', 0) or 0)), _detail_value_attr(selected_meta, "Failures", now_dt)),
                     ("Next Refresh", f"{_format_next_refresh(selected_meta, now_dt)} | {int(selected_meta.get('refresh_policy_seconds', 0) or 0)}s", _detail_value_attr(selected_meta, "Next Refresh", now_dt)),
-                    ("Short Window", _format_window_summary(selected_meta, 'short', now_dt), _detail_value_attr(selected_meta, "Short Window", now_dt)),
-                    ("Weekly Window", _format_window_summary(selected_meta, 'weekly', now_dt), _detail_value_attr(selected_meta, "Weekly Window", now_dt)),
+                                                                                ("Gemini Quota", f"Short: {_format_window_summary(selected_meta, 'gemini_short', now_dt)} | Weekly: {_format_window_summary(selected_meta, 'gemini_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
+                    ("Claude Quota", f"Short: {_format_window_summary(selected_meta, 'claude_short', now_dt)} | Weekly: {_format_window_summary(selected_meta, 'claude_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                     ("Problem", f"{verification.get('problem_status') or '-'} | {verification.get('recommended_action') or '-'}", _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
                     ("Problem Note", verification.get('summary') or '-', _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
                 ]
@@ -1564,10 +1566,10 @@ def _dashboard(stdscr, paths) -> int:
                     ("Issues", problem_summary.removeprefix("Issues: "), _problem_summary_attr(problem_counts)),
                     ("Mode", f"{selected_meta.get('status', 'standby')} | {'enabled' if selected_meta.get('enabled', True) else 'disabled'}", _detail_value_attr(selected_meta, "State", now_dt)),
                     ("Next Refresh", _format_next_refresh(selected_meta, now_dt), _detail_value_attr(selected_meta, "Next Refresh", now_dt)),
+                                        ("Gemini Quota", f"Short: {_format_window_summary(selected_meta, 'gemini_short', now_dt)} | Weekly: {_format_window_summary(selected_meta, 'gemini_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
+                    ("Claude Quota", f"Short: {_format_window_summary(selected_meta, 'claude_short', now_dt)} | Weekly: {_format_window_summary(selected_meta, 'claude_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                     ("Problem", f"{verification.get('problem_status') or '-'} | {verification.get('recommended_action') or '-'}", _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
-                    ("Short", _format_window_summary(selected_meta, 'short', now_dt), _detail_value_attr(selected_meta, "Short Window", now_dt)),
-                    ("Weekly", _format_window_summary(selected_meta, 'weekly', now_dt), _detail_value_attr(selected_meta, "Weekly Window", now_dt)),
-                    ("Note", verification.get('summary') or '-', _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
+                                                            ("Note", verification.get('summary') or '-', _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
                 ]
         else:
             overview_rows = [

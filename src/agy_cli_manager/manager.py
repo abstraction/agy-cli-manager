@@ -721,6 +721,17 @@ def _normalize_usage_windows(meta: dict) -> dict:
                 "reset_at": raw.get("reset_at"),
             }
 
+        # Apply weekly cap to cached short windows
+        def _cap(short_name: str, weekly_name: str):
+            short_win = windows[short_name]
+            weekly_win = windows[weekly_name]
+            if weekly_win.get("value") == 0.0:
+                short_win["value"] = 0.0
+
+        _cap("short", "weekly")
+        _cap("gemini_short", "gemini_weekly")
+        _cap("claude_short", "claude_weekly")
+
     short_window = windows["short"]
     if short_window.get("value") is None and meta.get("usage_value") is not None:
         short_window["value"] = meta.get("usage_value")
@@ -1020,6 +1031,25 @@ def _parse_quota_windows_from_summary(
                     gemini_weekly = _pick_best(gemini_weekly, parsed)
                 else:
                     claude_weekly = _pick_best(claude_weekly, parsed)
+
+    def _apply_weekly_cap(short_win: dict | None, weekly_win: dict | None) -> dict | None:
+        if short_win and weekly_win and weekly_win.get("value") == 0.0:
+            short_win = dict(short_win)
+            short_win["value"] = 0.0
+        return short_win
+
+    gemini_short = _apply_weekly_cap(gemini_short, gemini_weekly)
+    claude_short = _apply_weekly_cap(claude_short, claude_weekly)
+    
+    # Recalculate overall best windows to reflect the caps
+    best_short = None
+    best_weekly = None
+    for sw in (gemini_short, claude_short):
+        if sw:
+            best_short = _pick_best(best_short, sw)
+    for ww in (gemini_weekly, claude_weekly):
+        if ww:
+            best_weekly = _pick_best(best_weekly, ww)
 
     dw = _default_usage_window()
     return (

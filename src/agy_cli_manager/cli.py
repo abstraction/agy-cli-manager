@@ -16,6 +16,7 @@ from agy_cli_manager.manager import (
     apply_active,
     build_paths,
     clear_bad,
+    delete_account,
     default_root,
     ensure_active_account,
     ensure_layout,
@@ -171,6 +172,10 @@ def build_parser() -> argparse.ArgumentParser:
     clear = sub.add_parser("clear-bad", help="Clear cooldown/error state for an account")
     clear.add_argument("name")
 
+    delete_cmd = sub.add_parser("delete", help="Permanently delete an account and its saved profile")
+    delete_cmd.add_argument("name")
+    delete_cmd.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     live = sub.add_parser("set-live-dir", help="Set or clear a real live CLI home directory")
     live.add_argument("path", nargs="?")
 
@@ -279,6 +284,7 @@ def run_menu(paths, parser: argparse.ArgumentParser) -> int:
         print("15. Show account proxy")
         print("16. Set account proxy")
         print("17. Clear account proxy")
+        print("18. Delete account (irreversible)")
         print("0. Exit")
 
         choice = input("Select: ").strip()
@@ -385,6 +391,15 @@ def run_menu(paths, parser: argparse.ArgumentParser) -> int:
                 name = prompt_nonempty("Account name")
                 clear_account_proxy(paths, name)
                 print(f"proxy-cleared: {name}")
+            elif choice == "18":
+                name = prompt_nonempty("Account name to DELETE (irreversible)")
+                confirm = input(f"Type '{name}' again to confirm deletion: ").strip()
+                if confirm != name:
+                    print("Cancelled — names did not match.")
+                else:
+                    was_active = delete_account(paths, name)
+                    suffix = " (was active — switch to another account)" if was_active else ""
+                    print(f"deleted: {name}{suffix}")
             elif choice == "0":
                 return 0
             else:
@@ -394,6 +409,7 @@ def run_menu(paths, parser: argparse.ArgumentParser) -> int:
         except KeyboardInterrupt:
             print("\nCancelled.")
     return 0
+
 
 
 def _safe_addstr(stdscr, y: int, x: int, text: str, attr: int = 0) -> None:
@@ -787,6 +803,7 @@ def _draw_action_bar(stdscr, y: int) -> int:
         ("E", "Enable/Disable"),
         ("C", "ClearBad"),
         ("M", "MarkBad"),
+        ("D", "Delete"),
         ("W", "Mode"),
         ("Y", "AckRestart"),
         ("S", "Sort"),
@@ -1742,6 +1759,30 @@ def _dashboard(stdscr, paths) -> int:
             elif key in (ord("m"), ord("M")):
                 mark_bad(paths, selected_name, "manual", 60)
                 message = f"Marked {selected_name} bad with 60m cooldown."
+            elif key in (ord("d"), ord("D")):
+                # Inline confirmation prompt at the bottom of the screen
+                height, width = stdscr.getmaxyx()
+                prompt = f"Delete '{selected_name}'? Type name to confirm (Esc to cancel): "
+                _safe_addstr(stdscr, height - 1, 0, prompt[: width - 1], _severity_attr("bad", bold=True))
+                stdscr.clrtoeol()
+                stdscr.refresh()
+                curses.echo()
+                curses.curs_set(1)
+                try:
+                    raw = stdscr.getstr(height - 1, min(len(prompt), width - 2), 64)
+                    confirm_text = raw.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    confirm_text = ""
+                finally:
+                    curses.noecho()
+                    curses.curs_set(0)
+                if confirm_text != selected_name:
+                    message = "Delete cancelled (name mismatch or Esc)."
+                else:
+                    was_active = delete_account(paths, selected_name)
+                    selected_idx = max(0, selected_idx - 1)
+                    suffix = " (was active)" if was_active else ""
+                    message = f"Deleted {selected_name}{suffix}."
             else:
                 message = "Unknown key."
                 continue
@@ -2321,6 +2362,17 @@ def main() -> int:
         if args.command == "clear-bad":
             clear_bad(paths, args.name)
             print(f"cleared-bad: {args.name}")
+            return 0
+        if args.command == "delete":
+            was_active = delete_account(paths, args.name)
+            if args.json:
+                print(json.dumps({
+                    "deleted": args.name,
+                    "was_active": was_active,
+                }, indent=2, sort_keys=True))
+            else:
+                suffix = " (was active — no account is now active)" if was_active else ""
+                print(f"deleted: {args.name}{suffix}")
             return 0
         if args.command == "set-live-dir":
             live_dir = Path(args.path).expanduser() if args.path else None

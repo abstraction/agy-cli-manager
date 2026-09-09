@@ -2340,6 +2340,43 @@ def add_account(paths: ManagerPaths, name: str, source_dir: Path) -> None:
     save_account_profile(paths, name, source_dir, overwrite=False)
 
 
+def delete_account(paths: ManagerPaths, name: str) -> bool:
+    """Permanently remove an account profile from disk and from state.
+
+    Holds manager_lock for the full operation. State is saved atomically
+    *before* the directory is removed so that an interrupted rmtree leaves
+    state consistent (the account is already absent from state; the orphan
+    directory is harmless and can be cleaned manually).
+
+    Returns:
+        True if the deleted account was the currently active account
+        (active is set to None in state); False otherwise.
+
+    Raises:
+        ValueError: if name is empty or the account does not exist in state.
+    """
+    if not name.strip():
+        raise ValueError("Account name cannot be empty.")
+    with manager_lock(paths):
+        state = sync_state_from_disk(paths, load_state(paths))
+        if name not in state["accounts"]:
+            raise ValueError(f"Account not found: {name}")
+
+        was_active = state.get("active") == name
+
+        del state["accounts"][name]
+        if was_active:
+            state["active"] = None
+
+        save_state(paths, state)
+
+        target = account_dir(paths, name)
+        if target.exists():
+            shutil.rmtree(target)
+
+    return was_active
+
+
 def import_current(paths: ManagerPaths, name: str, source_dir: Path | None = None) -> None:
     with manager_lock(paths):
         state = sync_state_from_disk(paths, load_state(paths))

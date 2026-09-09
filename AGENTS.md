@@ -21,3 +21,11 @@ You can run them via:
 ```bash
 python3 -m unittest discover -s tests
 ```
+
+## 5. Development and Installation
+If `agy-cli-manager` is installed globally via `uv tool install .`, changes to the local `src/` directory will **not** be immediately reflected because the source is copied to `uv`'s isolated `site-packages`. 
+To ensure that local code changes take effect immediately without needing to reinstall, use the editable flag (`-e`):
+```bash
+uv tool install -e . --force
+```
+Once installed as editable, you do not need to rerun the install command when you modify `.py` files, as they are symlinked/referenced directly. Reinstallation is only required if you change dependencies or entry points in `pyproject.toml`.

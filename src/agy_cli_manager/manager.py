@@ -220,8 +220,11 @@ def manager_lock(paths: ManagerPaths):
 
 def load_state(paths: ManagerPaths) -> dict:
     ensure_layout(paths)
-    with paths.state_file.open("r", encoding="utf-8") as f:
-        data = json.load(f)
+    try:
+        with paths.state_file.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError:
+        data = {}
     data.setdefault("active", None)
     data.setdefault("accounts", {})
     data.setdefault("live_dir", str(default_live_dir()))
@@ -235,8 +238,10 @@ def load_state(paths: ManagerPaths) -> dict:
 
 
 def save_state(paths: ManagerPaths, state: dict) -> None:
-    with paths.state_file.open("w", encoding="utf-8") as f:
+    temp_file = paths.state_file.with_name(paths.state_file.name + ".tmp")
+    with temp_file.open("w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, sort_keys=True)
+    temp_file.replace(paths.state_file)
 
 
 def _normalize_switch_mode(value: object) -> str:

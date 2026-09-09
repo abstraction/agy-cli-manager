@@ -20,6 +20,8 @@ from agy_cli_manager.manager import (
     default_root,
     ensure_active_account,
     ensure_layout,
+    format_plan_type_compact,
+    format_plan_type_label,
     format_status,
     get_account_identity,
     get_account_proxy,
@@ -842,6 +844,19 @@ def _draw_action_bar(stdscr, y: int) -> int:
     return row + 1
 
 
+def _plan_type_attr(plan_type: str | None) -> int:
+    compact = format_plan_type_compact(plan_type)
+    if compact in {"Ultra", "UltMax"}:
+        return _severity_attr("warn", bold=True)
+    if compact in {"Pro", "Plus"}:
+        return _severity_attr("good")
+    if compact == "Free":
+        return _severity_attr("muted")
+    if compact in {"Ent"}:
+        return _severity_attr("info")
+    return _severity_attr("muted")
+
+
 def _detail_value_attr(selected_meta: dict, label: str, now_dt: datetime) -> int:
     if label in {"Short Window", "Weekly Window"}:
         return _usage_attr(selected_meta)
@@ -894,6 +909,7 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
             {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
             {"key": "name", "title": "Name", "width": 26},
             {"key": "state", "title": "State", "width": 11},
+            {"key": "plan", "title": "Plan", "width": 7},
             {"key": "issue", "title": "Issue", "width": 7},
             {"key": "usage", "title": "Remaining", "width": 26},
             {"key": "reset", "title": "Reset In", "width": 22},
@@ -962,6 +978,7 @@ def _draw_account_row(
         "marker": marker,
         "name": name,
         "state": state,
+        "plan": format_plan_type_compact(meta.get("plan_type")),
         "issue": _problem_badge(problem_status),
         "usage": _format_usage(meta),
         "reset": _format_countdown(meta, now_dt),
@@ -984,6 +1001,10 @@ def _draw_account_row(
             attr = _selected_name_attr(state, selected)
         elif key == "state":
             attr = _state_attr(state, selected)
+        elif key == "plan":
+            attr = _plan_type_attr(meta.get("plan_type"))
+            if selected:
+                attr = _severity_attr("selected", bold=True)
         elif key == "issue":
             attr = _problem_attr(problem_status, selected)
         elif key == "usage":
@@ -1557,6 +1578,7 @@ def _dashboard(stdscr, paths) -> int:
             if compact_detail_mode:
                 overview_rows = [
                     ("Account", selected_name, _selected_name_attr(selected_meta.get("status", "standby"), True)),
+                    ("Plan", format_plan_type_label(selected_meta.get("plan_type")), _plan_type_attr(selected_meta.get("plan_type"))),
                     ("Remaining", _format_usage(selected_meta), _usage_attr(selected_meta)),
                     ("Quota", f"{_format_window_summary(selected_meta, 'short', now_dt)} | {_format_window_summary(selected_meta, 'weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                                         ("Gemini Quota", f"Short: {_format_window_summary(selected_meta, 'gemini_short', now_dt)} | Weekly: {_format_window_summary(selected_meta, 'gemini_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
@@ -1571,6 +1593,7 @@ def _dashboard(stdscr, paths) -> int:
                     ("Remaining", _format_usage(selected_meta), _usage_attr(selected_meta)),
                     ("Issues", problem_summary.removeprefix("Issues: "), _problem_summary_attr(problem_counts)),
                     ("Identity", _format_identity(selected_meta), _detail_value_attr(selected_meta, "Identity", now_dt)),
+                    ("Plan", format_plan_type_label(selected_meta.get("plan_type")), _plan_type_attr(selected_meta.get("plan_type"))),
                     ("Mode", f"{selected_meta.get('status', 'standby')} | {'enabled' if selected_meta.get('enabled', True) else 'disabled'}", _detail_value_attr(selected_meta, "State", now_dt)),
                     ("Failures", str(int(selected_meta.get('fail_count', 0) or 0)), _detail_value_attr(selected_meta, "Failures", now_dt)),
                     ("Next Refresh", f"{_format_next_refresh(selected_meta, now_dt)} | {int(selected_meta.get('refresh_policy_seconds', 0) or 0)}s", _detail_value_attr(selected_meta, "Next Refresh", now_dt)),
@@ -1582,6 +1605,7 @@ def _dashboard(stdscr, paths) -> int:
             else:
                 overview_rows = [
                     ("Account", selected_name, _selected_name_attr(selected_meta.get("status", "standby"), True)),
+                    ("Plan", format_plan_type_label(selected_meta.get("plan_type")), _plan_type_attr(selected_meta.get("plan_type"))),
                     ("Health", _format_live_state(selected_meta, now_dt), _detail_value_attr(selected_meta, "Health", now_dt)),
                     ("Remaining", _format_usage(selected_meta), _usage_attr(selected_meta)),
                     ("Issues", problem_summary.removeprefix("Issues: "), _problem_summary_attr(problem_counts)),
@@ -1817,6 +1841,7 @@ def print_account_list(paths, as_json: bool) -> None:
                 "name": name,
                 "status": meta.get("status"),
                 "enabled": bool(meta.get("enabled", True)),
+                "plan_type": meta.get("plan_type"),
                 "identity": meta.get("identity"),
                 "last_error": meta.get("last_error"),
                 "cooldown_until": meta.get("cooldown_until"),
@@ -1835,7 +1860,8 @@ def print_account_list(paths, as_json: bool) -> None:
         marker = "*" if entry["name"] == snapshot.get("active") else "-"
         status = entry["status"] or "standby"
         enabled = "enabled" if entry["enabled"] else "disabled"
-        print(f"{marker} {entry['name']} [{status}, {enabled}] proxy={_format_proxy_brief(entry.get('proxy'))}")
+        plan_label = format_plan_type_compact(entry.get("plan_type"))
+        print(f"{marker} {entry['name']} [{status}, {enabled}, {plan_label}] proxy={_format_proxy_brief(entry.get('proxy'))}")
 
 
 def print_current_account(paths, as_json: bool) -> None:

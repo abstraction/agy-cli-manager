@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 
 from agy_cli_manager.manager import (
+    format_plan_type_compact,
+    format_plan_type_label,
     account_dir,
     build_paths,
     delete_account,
@@ -129,3 +131,22 @@ class DeleteAccountTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class PlanTypeLabelTests(unittest.TestCase):
+    def test_known_pro(self):
+        self.assertEqual(format_plan_type_label("GEMINI_CODE_ASSIST"), "Google AI Pro")
+        self.assertEqual(format_plan_type_compact("GEMINI_CODE_ASSIST"), "Pro")
+
+    def test_known_free(self):
+        self.assertEqual(format_plan_type_compact("GEMINI_CODE_ASSIST_STARTER"), "Free")
+
+    def test_known_ultra(self):
+        self.assertEqual(format_plan_type_compact("GOOGLE_AI_ULTRA"), "Ultra")
+
+    def test_unknown_falls_through(self):
+        label = format_plan_type_compact("SOME_NEW_TIER_2027")
+        self.assertLessEqual(len(label), 6)
+
+    def test_none_returns_placeholder(self):
+        self.assertEqual(format_plan_type_compact(None), "?")
+        self.assertEqual(format_plan_type_label(None), "-")

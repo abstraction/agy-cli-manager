@@ -53,6 +53,43 @@ CODE_ASSIST_QUOTA_PATH = "/v1internal:retrieveUserQuota"
 CODE_ASSIST_QUOTA_SUMMARY_PATH = "/v1internal:retrieveUserQuotaSummary"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 
+# Maps raw planType strings returned by the Cloud Code API to
+# (full_label, compact_label).  compact_label is ≤6 chars for TUI columns.
+# Unknown values fall through to a truncated version of the raw string.
+_PLAN_TYPE_LABELS: dict[str, tuple[str, str]] = {
+    "GEMINI_CODE_ASSIST_STARTER":     ("Google AI Free",  "Free"),
+    "GEMINI_CODE_ASSIST":             ("Google AI Pro",   "Pro"),
+    "CLOUD_AI_COMPANION":             ("Google AI Pro",   "Pro"),
+    "CLOUD_AI_COMPANION_STANDARD":    ("Google AI Plus",  "Plus"),
+    "GOOGLE_AI_PRO":                  ("Google AI Pro",   "Pro"),
+    "GOOGLE_AI_ULTRA":                ("Google AI Ultra", "Ultra"),
+    "GOOGLE_AI_ULTRA_MAX":            ("Ultra Max",       "UltMax"),
+    "GEMINI_CODE_ASSIST_ENTERPRISE":  ("Enterprise",      "Ent"),
+    "CLOUD_AI_COMPANION_ENTERPRISE":  ("Enterprise",      "Ent"),
+}
+
+
+def format_plan_type_label(plan_type: str | None) -> str:
+    """Return the human-readable full plan name, e.g. 'Google AI Pro'.
+
+    Returns '-' when plan_type is None (not yet refreshed).
+    Falls through to the raw value for unknown future tier strings.
+    """
+    if not plan_type:
+        return "-"
+    return _PLAN_TYPE_LABELS.get(plan_type, (plan_type, plan_type))[0]
+
+
+def format_plan_type_compact(plan_type: str | None) -> str:
+    """Return ≤6-char compact plan badge, e.g. 'Pro', 'Ultra', 'Free'.
+
+    Returns '?' when plan_type is None (not yet refreshed).
+    Falls through to a ≤6-char truncation for unknown future tier strings.
+    """
+    if not plan_type:
+        return "?"
+    return _PLAN_TYPE_LABELS.get(plan_type, (plan_type, plan_type[:6]))[1]
+
 
 @dataclass
 class ManagerPaths:
@@ -1666,6 +1703,7 @@ def refresh_account_usage(
             windows["claude_weekly"]["status"] = result.claude_weekly_status
             windows["claude_weekly"]["value"] = result.claude_weekly_value
             windows["claude_weekly"]["reset_at"] = result.claude_weekly_reset_at
+            meta["plan_type"] = result.plan_type
             meta["usage_windows"] = windows
             meta["health_status"] = "healthy"
             meta["last_live_check_at"] = _normalize_timestamp(refreshed_at)
@@ -2320,6 +2358,7 @@ def save_account_profile(paths: ManagerPaths, name: str, source_dir: Path, overw
             "next_live_check_at": previous_meta.get("next_live_check_at"),
             "refresh_policy_seconds": int(previous_meta.get("refresh_policy_seconds", DEFAULT_REFRESH_POLICY_SECONDS) or DEFAULT_REFRESH_POLICY_SECONDS),
             "identity": identity,
+            "plan_type": previous_meta.get("plan_type"),
             "proxy": _normalize_proxy_config(previous_meta.get("proxy")),
         }
         _sync_legacy_usage_fields(state["accounts"][name])

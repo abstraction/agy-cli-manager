@@ -1461,8 +1461,12 @@ def _dashboard(stdscr, paths) -> int:
                     weekly_text = "-" if weekly_value is None else f"{weekly_value:.2f}%"
                     message = f"Background refreshed {account_name}: {short_text}/{weekly_text}"
                 else:
-                    refresh_backoff_until[account_name] = time.time() + 60
-                    message = f"Background refresh failed for {account_name}: {refresh_event.get('error', 'unknown error')}"
+                    error_msg = refresh_event.get('error', 'unknown error')
+                    if "warmup" in error_msg.lower() or "authentication failed" in error_msg.lower():
+                        refresh_backoff_until[account_name] = time.time() + 3600
+                    else:
+                        refresh_backoff_until[account_name] = time.time() + 60
+                    message = f"Background refresh failed for {account_name}: {error_msg}"
         except Empty:
             pass
 

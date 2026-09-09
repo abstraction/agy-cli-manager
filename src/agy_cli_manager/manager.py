@@ -937,20 +937,26 @@ def _run_agy_warmup(home_root: Path, agy_binary: str | None, timeout_seconds: in
     env = os.environ.copy()
     env["HOME"] = str(home_root)
     env["PATH"] = env.get("PATH", "/bin:/usr/bin:/usr/local/bin")
-    proc = subprocess.run(
-        [
-            resolved_binary,
-            "--dangerously-skip-permissions",
-            "-p",
-            "reply with one word: pong",
-        ],
-        cwd=home_root,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=max(10, timeout_seconds),
-        check=False,
-    )
+    env["BROWSER"] = "false"
+    env["DISPLAY"] = ""
+    env["WAYLAND_DISPLAY"] = ""
+    try:
+        proc = subprocess.run(
+            [
+                resolved_binary,
+                "--dangerously-skip-permissions",
+                "-p",
+                "reply with one word: pong",
+            ],
+            cwd=home_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=max(10, timeout_seconds),
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise ValueError("agy warmup timed out.")
     if proc.returncode != 0:
         stderr = (proc.stderr or "").strip()
         stdout = (proc.stdout or "").strip()

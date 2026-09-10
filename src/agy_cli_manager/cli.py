@@ -488,7 +488,7 @@ def _init_dashboard_colors() -> None:
         return
     curses.init_pair(COLOR_HEADER, curses.COLOR_CYAN, -1)
     curses.init_pair(COLOR_ACTIONS, curses.COLOR_BLUE, -1)
-    curses.init_pair(COLOR_SECTION, curses.COLOR_MAGENTA, -1)
+    curses.init_pair(COLOR_SECTION, curses.COLOR_WHITE, -1)
     curses.init_pair(COLOR_GOOD, curses.COLOR_GREEN, -1)
     curses.init_pair(COLOR_WARN, curses.COLOR_YELLOW, -1)
     curses.init_pair(COLOR_BAD, curses.COLOR_RED, -1)
@@ -496,7 +496,7 @@ def _init_dashboard_colors() -> None:
     curses.init_pair(COLOR_MUTED, curses.COLOR_WHITE, -1)
     curses.init_pair(COLOR_INFO, curses.COLOR_BLUE, -1)
     curses.init_pair(COLOR_SELECTED, curses.COLOR_YELLOW, -1)
-    curses.init_pair(COLOR_LABEL, curses.COLOR_MAGENTA, -1)
+    curses.init_pair(COLOR_LABEL, curses.COLOR_WHITE, -1)
 
 
 def _color_attr(pair_id: int, extra: int = 0) -> int:
@@ -559,7 +559,7 @@ def _state_attr(state: str, selected: bool = False) -> int:
         return _severity_attr("good", selected)
     if normalized in {"ready"}:
         return _severity_attr("good", selected, bold=True)
-    if normalized in {"cooldown", "disabled", "auth_expired"}:
+    if normalized in {"cooldown", "auth_expired"}:
         return _severity_attr("warn", selected)
     if normalized in {"bad", "error", "failed", "stale", "refresh_failed", "auth_missing"}:
         return _severity_attr("bad", selected)
@@ -621,8 +621,10 @@ def _message_attr(message: str) -> int:
     lowered = message.lower()
     if "failed" in lowered or lowered.startswith("error:"):
         return _severity_attr("bad", bold=True)
-    if "due" in lowered or "refresh" in lowered or "rotated" in lowered:
+    if "due" in lowered:
         return _severity_attr("warn", bold=True)
+    if "refresh" in lowered or "rotated" in lowered:
+        return _severity_attr("info", bold=True)
     return _severity_attr("good", bold=True)
 
 
@@ -653,7 +655,7 @@ def _problem_attr(problem_status: str | None, selected: bool = False) -> int:
 def _problem_summary_attr(problem_counts: dict[str, int]) -> int:
     if any(problem_counts.get(key, 0) > 0 for key in ("logged_out", "missing_auth", "refresh_failed")):
         return _severity_attr("bad", bold=True)
-    if any(problem_counts.get(key, 0) > 0 for key in ("stale", "cooldown", "disabled")):
+    if any(problem_counts.get(key, 0) > 0 for key in ("stale", "cooldown")):
         return _severity_attr("warn", bold=True)
     return _severity_attr("good", bold=True)
 
@@ -668,7 +670,7 @@ def _summarize_problem_counts(verification_accounts: dict[str, dict]) -> tuple[s
             continue
         problem_counts[status] = problem_counts.get(status, 0) + 1
     if not problem_counts:
-        return "Issues: none", {}
+        return "Summary: none", {}
     ordered = [
         "logged_out",
         "missing_auth",
@@ -678,7 +680,7 @@ def _summarize_problem_counts(verification_accounts: dict[str, dict]) -> tuple[s
         "disabled",
     ]
     parts = [f"{problem_counts[key]} {key}" for key in ordered if key in problem_counts]
-    return f"Issues: {', '.join(parts)}", problem_counts
+    return f"Summary: {', '.join(parts)}", problem_counts
 
 
 def _draw_segments(stdscr, y: int, segments: list[tuple[str, int]]) -> None:
@@ -819,7 +821,7 @@ def _draw_action_bar(stdscr, y: int) -> int:
     x = 0
     row = 0
     prefix = "Actions: "
-    _safe_addstr(stdscr, y, x, prefix, _color_attr(COLOR_ACTIONS, curses.A_BOLD))
+    _safe_addstr(stdscr, y, x, prefix, _color_attr(COLOR_MUTED, curses.A_BOLD))
     x += len(prefix)
     for key, label in actions:
         parts = [
@@ -827,7 +829,7 @@ def _draw_action_bar(stdscr, y: int) -> int:
             (key, _severity_attr("selected", bold=True)),
             ("]", _color_attr(COLOR_MUTED)),
             (" ", _color_attr(COLOR_MUTED)),
-            (label, _color_attr(COLOR_ACTIONS, curses.A_BOLD)),
+            (label, _color_attr(COLOR_MUTED)),
             ("  ", _color_attr(COLOR_MUTED)),
         ]
         needed = sum(len(text) for text, _attr in parts)
@@ -907,12 +909,12 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
     if width >= 160:
         return [
             {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
-            {"key": "name", "title": "Name", "width": 26},
+            {"key": "name", "title": "Name", "width": 32},
             {"key": "state", "title": "State", "width": 11},
             {"key": "plan", "title": "Plan", "width": 7},
             {"key": "issue", "title": "Issue", "width": 7},
-            {"key": "usage", "title": "Remaining", "width": 26},
-            {"key": "reset", "title": "Reset In", "width": 22},
+            {"key": "usage", "title": "Remaining", "width": 18},
+            {"key": "reset", "title": "Reset In", "width": 15},
             {"key": "next", "title": "Next Ref", "width": 9},
             {"key": "fail", "title": "Fail", "width": 5, "align": "right"},
             {"key": "error", "title": "Last Error", "width": 18},
@@ -920,21 +922,21 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
     if width >= 130:
         return [
             {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
-            {"key": "name", "title": "Name", "width": 20},
+            {"key": "name", "title": "Name", "width": 26},
             {"key": "state", "title": "State", "width": 10},
             {"key": "issue", "title": "Issue", "width": 7},
-            {"key": "usage", "title": "Remaining", "width": 26},
-            {"key": "reset", "title": "Reset In", "width": 22},
+            {"key": "usage", "title": "Remaining", "width": 18},
+            {"key": "reset", "title": "Reset In", "width": 15},
             {"key": "next", "title": "Next", "width": 8},
             {"key": "fail", "title": "Fail", "width": 4, "align": "right"},
         ]
     if width >= 96:
         return [
             {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
-            {"key": "name", "title": "Name", "width": 16},
+            {"key": "name", "title": "Name", "width": 22},
             {"key": "state", "title": "State", "width": 10},
             {"key": "issue", "title": "Issue", "width": 7},
-            {"key": "usage", "title": "Remaining", "width": 26},
+            {"key": "usage", "title": "Remaining", "width": 18},
             {"key": "next", "title": "Next", "width": 8},
             {"key": "fail", "title": "Fail", "width": 4, "align": "right"},
         ]
@@ -1014,9 +1016,11 @@ def _draw_account_row(
         elif key == "next":
             attr = _next_refresh_attr(meta, now_dt, selected)
         elif key == "fail":
-            attr = _severity_attr("bad" if fail_count > 0 else "muted", selected)
+            is_bad = fail_count > 0 and state != "disabled"
+            attr = _severity_attr("bad" if is_bad else "muted", selected)
         elif key == "error":
-            attr = _severity_attr("bad" if values["error"] != "-" else "muted", selected)
+            is_bad = values["error"] != "-" and state != "disabled"
+            attr = _severity_attr("bad" if is_bad else "muted", selected)
         segments.append((_fit_cell(str(values.get(key, "-")), width, align), attr))
     _draw_segments(stdscr, y, segments)
 
@@ -1092,42 +1096,75 @@ def _parse_iso_timestamp(value: str | None) -> datetime | None:
         return None
 
 
+def _get_min_window(w1: dict, w2: dict) -> dict:
+    v1 = w1.get("value")
+    v2 = w2.get("value")
+    if isinstance(v1, (int, float)) and isinstance(v2, (int, float)):
+        return w1 if v1 <= v2 else w2
+    if isinstance(v1, (int, float)):
+        return w1
+    if isinstance(v2, (int, float)):
+        return w2
+    return w1 if w1.get("status", "unknown") != "unknown" else w2
+
 def _format_usage(meta: dict) -> str:
     g_short = _get_group_window(meta, "gemini_short")
     g_weekly = _get_group_window(meta, "gemini_weekly")
     c_short = _get_group_window(meta, "claude_short")
     c_weekly = _get_group_window(meta, "claude_weekly")
+    
+    g_min = _get_min_window(g_short, g_weekly)
+    c_min = _get_min_window(c_short, c_weekly)
+    
     has_gemini = g_short.get("status", "unknown") != "unknown" or g_weekly.get("status", "unknown") != "unknown"
     has_claude = c_short.get("status", "unknown") != "unknown" or c_weekly.get("status", "unknown") != "unknown"
+    
     if has_gemini and has_claude:
-        return (
-            f"G:{_format_usage_value(g_short)}/{_format_usage_value(g_weekly)}"
-            f" C:{_format_usage_value(c_short)}/{_format_usage_value(c_weekly)}"
-        )
-    # Fall back to combined short/weekly when per-group data not yet fetched
+        return f"G:{_format_usage_value(g_min)} C:{_format_usage_value(c_min)}"
+    if has_gemini:
+        return _format_usage_value(g_min)
+    if has_claude:
+        return _format_usage_value(c_min)
+        
     windows = meta.get("usage_windows") if isinstance(meta.get("usage_windows"), dict) else {}
     short = windows.get("short") if isinstance(windows.get("short"), dict) else {}
     weekly = windows.get("weekly") if isinstance(windows.get("weekly"), dict) else {}
-    return f"{_format_usage_value(short)}/{_format_usage_value(weekly)}"
+    return _format_usage_value(_get_min_window(short, weekly))
 
+def _get_nearest_reset(w1: dict, w2: dict, now) -> dict:
+    r1 = _parse_iso_timestamp(w1.get("reset_at"))
+    r2 = _parse_iso_timestamp(w2.get("reset_at"))
+    if r1 and r2:
+        return w1 if r1 <= r2 else w2
+    if r1:
+        return w1
+    if r2:
+        return w2
+    return w1
 
-def _format_countdown(meta: dict, now: datetime) -> str:
+def _format_countdown(meta: dict, now) -> str:
     g_short = _get_group_window(meta, "gemini_short")
     g_weekly = _get_group_window(meta, "gemini_weekly")
     c_short = _get_group_window(meta, "claude_short")
     c_weekly = _get_group_window(meta, "claude_weekly")
+    
+    g_near = _get_nearest_reset(g_short, g_weekly, now)
+    c_near = _get_nearest_reset(c_short, c_weekly, now)
+    
     has_gemini = g_short.get("status", "unknown") != "unknown" or g_weekly.get("status", "unknown") != "unknown"
     has_claude = c_short.get("status", "unknown") != "unknown" or c_weekly.get("status", "unknown") != "unknown"
+    
     if has_gemini and has_claude:
-        return (
-            f"G:{_format_reset_value(g_short, now)}/{_format_reset_value(g_weekly, now)}"
-            f" C:{_format_reset_value(c_short, now)}/{_format_reset_value(c_weekly, now)}"
-        )
-    # Fall back to combined short/weekly
+        return f"G:{_format_reset_value(g_near, now)} C:{_format_reset_value(c_near, now)}"
+    if has_gemini:
+        return _format_reset_value(g_near, now)
+    if has_claude:
+        return _format_reset_value(c_near, now)
+        
     windows = meta.get("usage_windows") if isinstance(meta.get("usage_windows"), dict) else {}
     short = windows.get("short") if isinstance(windows.get("short"), dict) else {}
     weekly = windows.get("weekly") if isinstance(windows.get("weekly"), dict) else {}
-    return f"{_format_reset_value(short, now)}/{_format_reset_value(weekly, now)}"
+    return _format_reset_value(_get_nearest_reset(short, weekly, now), now)
 
 
 def _format_age(value: str | None, now: datetime) -> str:
@@ -1181,7 +1218,9 @@ def _format_window_summary(meta: dict, window_name: str, now: datetime) -> str:
             minutes, seconds = divmod(delta, 60)
             hours, minutes = divmod(minutes, 60)
             countdown = f"{hours}h{minutes:02}m" if hours else (f"{minutes}m{seconds:02}s" if minutes else f"{seconds}s")
-    return f"{usage} | {countdown}"
+    if isinstance(value, (int, float)):
+        usage = f"{round(float(value))}%"
+    return f"{usage} (in {countdown})" if countdown != "-" else usage
 
 
 def _format_usage_value(window: dict) -> str:
@@ -1581,24 +1620,24 @@ def _dashboard(stdscr, paths) -> int:
                     ("Plan", format_plan_type_label(selected_meta.get("plan_type")), _plan_type_attr(selected_meta.get("plan_type"))),
                     ("Remaining", _format_usage(selected_meta), _usage_attr(selected_meta)),
                     ("Quota", f"{_format_window_summary(selected_meta, 'short', now_dt)} | {_format_window_summary(selected_meta, 'weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
-                                        ("Gemini Quota", f"Short: {_format_window_summary(selected_meta, 'gemini_short', now_dt)} | Weekly: {_format_window_summary(selected_meta, 'gemini_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
-                    ("Claude Quota", f"Short: {_format_window_summary(selected_meta, 'claude_short', now_dt)} | Weekly: {_format_window_summary(selected_meta, 'claude_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
+                                        ("Gemini Quota", f"Short: {_format_window_summary(selected_meta, 'gemini_short', now_dt)}, Weekly: {_format_window_summary(selected_meta, 'gemini_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
+                    ("Claude Quota", f"Short: {_format_window_summary(selected_meta, 'claude_short', now_dt)}, Weekly: {_format_window_summary(selected_meta, 'claude_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                     ("Problem", f"{verification.get('problem_status') or '-'} | {verification.get('recommended_action') or '-'}", _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
-                    ("Issues", problem_summary.removeprefix("Issues: "), _problem_summary_attr(problem_counts)),
+                    ("Summary", problem_summary.removeprefix("Summary: "), _problem_summary_attr(problem_counts)),
                 ]
             elif width >= 110:
                 overview_rows = [
                     ("Account", selected_name, _selected_name_attr(selected_meta.get("status", "standby"), True)),
                     ("Health", _format_live_state(selected_meta, now_dt), _detail_value_attr(selected_meta, "Health", now_dt)),
                     ("Remaining", _format_usage(selected_meta), _usage_attr(selected_meta)),
-                    ("Issues", problem_summary.removeprefix("Issues: "), _problem_summary_attr(problem_counts)),
+                    ("Summary", problem_summary.removeprefix("Summary: "), _problem_summary_attr(problem_counts)),
                     ("Identity", _format_identity(selected_meta), _detail_value_attr(selected_meta, "Identity", now_dt)),
                     ("Plan", format_plan_type_label(selected_meta.get("plan_type")), _plan_type_attr(selected_meta.get("plan_type"))),
                     ("Mode", f"{selected_meta.get('status', 'standby')} | {'enabled' if selected_meta.get('enabled', True) else 'disabled'}", _detail_value_attr(selected_meta, "State", now_dt)),
                     ("Failures", str(int(selected_meta.get('fail_count', 0) or 0)), _detail_value_attr(selected_meta, "Failures", now_dt)),
                     ("Next Refresh", f"{_format_next_refresh(selected_meta, now_dt)} | {int(selected_meta.get('refresh_policy_seconds', 0) or 0)}s", _detail_value_attr(selected_meta, "Next Refresh", now_dt)),
-                                                                                ("Gemini Quota", f"Short: {_format_window_summary(selected_meta, 'gemini_short', now_dt)} | Weekly: {_format_window_summary(selected_meta, 'gemini_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
-                    ("Claude Quota", f"Short: {_format_window_summary(selected_meta, 'claude_short', now_dt)} | Weekly: {_format_window_summary(selected_meta, 'claude_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
+                                                                                ("Gemini Quota", f"Short: {_format_window_summary(selected_meta, 'gemini_short', now_dt)}, Weekly: {_format_window_summary(selected_meta, 'gemini_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
+                    ("Claude Quota", f"Short: {_format_window_summary(selected_meta, 'claude_short', now_dt)}, Weekly: {_format_window_summary(selected_meta, 'claude_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                     ("Problem", f"{verification.get('problem_status') or '-'} | {verification.get('recommended_action') or '-'}", _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
                     ("Problem Note", verification.get('summary') or '-', _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
                 ]
@@ -1608,11 +1647,11 @@ def _dashboard(stdscr, paths) -> int:
                     ("Plan", format_plan_type_label(selected_meta.get("plan_type")), _plan_type_attr(selected_meta.get("plan_type"))),
                     ("Health", _format_live_state(selected_meta, now_dt), _detail_value_attr(selected_meta, "Health", now_dt)),
                     ("Remaining", _format_usage(selected_meta), _usage_attr(selected_meta)),
-                    ("Issues", problem_summary.removeprefix("Issues: "), _problem_summary_attr(problem_counts)),
+                    ("Summary", problem_summary.removeprefix("Summary: "), _problem_summary_attr(problem_counts)),
                     ("Mode", f"{selected_meta.get('status', 'standby')} | {'enabled' if selected_meta.get('enabled', True) else 'disabled'}", _detail_value_attr(selected_meta, "State", now_dt)),
                     ("Next Refresh", _format_next_refresh(selected_meta, now_dt), _detail_value_attr(selected_meta, "Next Refresh", now_dt)),
-                                        ("Gemini Quota", f"Short: {_format_window_summary(selected_meta, 'gemini_short', now_dt)} | Weekly: {_format_window_summary(selected_meta, 'gemini_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
-                    ("Claude Quota", f"Short: {_format_window_summary(selected_meta, 'claude_short', now_dt)} | Weekly: {_format_window_summary(selected_meta, 'claude_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
+                                        ("Gemini Quota", f"Short: {_format_window_summary(selected_meta, 'gemini_short', now_dt)}, Weekly: {_format_window_summary(selected_meta, 'gemini_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
+                    ("Claude Quota", f"Short: {_format_window_summary(selected_meta, 'claude_short', now_dt)}, Weekly: {_format_window_summary(selected_meta, 'claude_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                     ("Problem", f"{verification.get('problem_status') or '-'} | {verification.get('recommended_action') or '-'}", _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
                                                             ("Note", verification.get('summary') or '-', _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
                 ]
@@ -1620,7 +1659,7 @@ def _dashboard(stdscr, paths) -> int:
             overview_rows = [
                 ("Status", "No saved accounts.", _severity_attr("muted")),
                 ("Hint", "Add one with login/import-current.", _severity_attr("info")),
-                ("Issues", "none", _severity_attr("good", bold=True)),
+                ("Summary", "none", _severity_attr("good", bold=True)),
             ]
 
         overview_panel_height = 1 + len(overview_rows)

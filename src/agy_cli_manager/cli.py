@@ -1496,7 +1496,7 @@ def _dashboard(stdscr, paths) -> int:
     refresh_options = [5, 10, 15, 30]
     refresh_idx = 0
     selected_idx = 0
-    sort_idx = 0
+    sort_idx = 2
     message = "Live status refresh runs on due timers and manual refresh."
     snapshot = _refresh_dashboard_snapshot(paths)
     last_refresh = 0.0

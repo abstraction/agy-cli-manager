@@ -1,5 +1,12 @@
 # agy-cli-manager
 
+> [!NOTE]
+> **Linux-only fork.**
+>
+> [Upstream](https://github.com/zcop/agy-cli-manager) expects `agy` OAuth tokens in flat files, crashing on [Windows](https://github.com/zcop/agy-cli-manager/issues/1) and [macOS](https://github.com/zcop/agy-cli-manager/issues/2). On Linux, `agy` uses the global Secret Service.
+>
+> This fork adds OS keyring isolation so background quota checks stop wiping out your active terminal session. It also adds user-agent spoofing, fixes API parsing, and overhauls the TUI.
+
 `agy-cli-manager` is a Python account manager for Antigravity CLI (`agy`) with active-standby failover, quota-aware switching, and machine-readable automation APIs.
 
 It helps you run multiple Antigravity CLI accounts more safely by:

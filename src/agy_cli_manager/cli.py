@@ -503,6 +503,8 @@ def _severity_attr(severity: str, selected: bool = False, bold: bool = False) ->
     if bold:
         extra |= curses.A_BOLD
     if selected:
+        extra |= curses.A_REVERSE
+    if selected:
         extra |= curses.A_BOLD
     if severity == "good":
         return _color_attr(COLOR_GOOD, extra)
@@ -518,7 +520,7 @@ def _severity_attr(severity: str, selected: bool = False, bold: bool = False) ->
         return _color_attr(COLOR_SELECTED, extra | curses.A_BOLD)
     if severity == "label":
         return _color_attr(COLOR_LABEL, extra | curses.A_BOLD)
-    return _color_attr(COLOR_MUTED, extra)
+    return _color_attr(COLOR_MUTED, extra | curses.A_DIM)
 
 
 def _selected_marker_attr(selected: bool) -> int:
@@ -631,7 +633,8 @@ def _problem_attr(problem_status: str | None, selected: bool = False) -> int:
     if normalized in {"stale", "cooldown", "disabled"}:
         return _severity_attr("warn", selected, bold=True)
     if normalized in {"refresh_failed", "missing_auth", "logged_out"}:
-        return _severity_attr("bad", selected, bold=True)
+        attr = _severity_attr("bad", selected, bold=True)
+        return attr | curses.A_REVERSE if not selected else attr
     return _severity_attr("muted", selected)
 
 
@@ -808,12 +811,10 @@ def _draw_action_bar(stdscr, y: int) -> int:
     x += len(prefix)
     for key, label in actions:
         parts = [
-            ("[", _color_attr(COLOR_MUTED)),
             (key, _severity_attr("selected", bold=True)),
-            ("]", _color_attr(COLOR_MUTED)),
             (" ", _color_attr(COLOR_MUTED)),
-            (label, _color_attr(COLOR_MUTED)),
-            ("  ", _color_attr(COLOR_MUTED)),
+            (label, _severity_attr("muted")),
+            ("   ", _color_attr(COLOR_MUTED)),
         ]
         needed = sum(len(text) for text, _attr in parts)
         if x + needed >= max(0, width - 1):
@@ -896,9 +897,9 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
             {"key": "state", "title": "State", "width": 11},
             {"key": "plan", "title": "Plan", "width": 7},
             {"key": "issue", "title": "Health", "width": 7},
-            {"key": "usage", "title": "Remaining", "width": 18},
-            {"key": "reset", "title": "Reset In", "width": 15},
-            {"key": "next", "title": "Next", "width": 9},
+            {"key": "usage", "title": "Remaining", "width": 18, "align": "right"},
+            {"key": "reset", "title": "Reset In", "width": 15, "align": "right"},
+            {"key": "next", "title": "Next", "width": 9, "align": "right"},
             {"key": "error", "title": "Last Error", "width": 18},
         ]
     if width >= 130:
@@ -907,9 +908,9 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
             {"key": "name", "title": "Account", "width": 26},
             {"key": "state", "title": "State", "width": 10},
             {"key": "issue", "title": "Health", "width": 7},
-            {"key": "usage", "title": "Remaining", "width": 18},
-            {"key": "reset", "title": "Reset In", "width": 15},
-            {"key": "next", "title": "Next", "width": 8},
+            {"key": "usage", "title": "Remaining", "width": 18, "align": "right"},
+            {"key": "reset", "title": "Reset In", "width": 15, "align": "right"},
+            {"key": "next", "title": "Next", "width": 8, "align": "right"},
         ]
     if width >= 96:
         return [
@@ -917,8 +918,8 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
             {"key": "name", "title": "Account", "width": 22},
             {"key": "state", "title": "State", "width": 10},
             {"key": "issue", "title": "Health", "width": 7},
-            {"key": "usage", "title": "Remaining", "width": 18},
-            {"key": "next", "title": "Next", "width": 8},
+            {"key": "usage", "title": "Remaining", "width": 18, "align": "right"},
+            {"key": "next", "title": "Next", "width": 8, "align": "right"},
         ]
     return [
         {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
@@ -963,7 +964,7 @@ def _draw_account_row(
     now_dt: datetime,
 ) -> None:
     state = meta.get("status", "standby")
-    marker = ">" if selected else ("*" if state == "active" else ".")
+    marker = ">" if selected else ("*" if state == "active" else " ")
     values = {
         "marker": marker,
         "name": name,
@@ -1463,7 +1464,8 @@ def _proxy_dashboard(stdscr, paths) -> int:
                 ],
             )
 
-        _draw_hline(stdscr, height - 2, "=")
+        _draw_hline(stdscr, height - 4, "━")
+        action_lines = _draw_action_bar(stdscr, height - 3)
         _safe_addstr(stdscr, height - 1, 0, f"Status: {message}"[: max(0, width - 1)], _message_attr(message))
         stdscr.refresh()
 
@@ -1569,25 +1571,24 @@ def _dashboard(stdscr, paths) -> int:
         stdscr.erase()
         height, width = stdscr.getmaxyx()
 
-        top = (
-            "AGY CLI Manager"
-            f" | Active: {snapshot.get('active') or '-'}"
-            f" | Accounts: {len(accounts)}"
-            f" | UI Refresh: {interval}s"
-            f" | Sort: {sort_mode_name}"
-            f" | Switch: {snapshot.get('switch_mode') or 'auto'}"
-            f" | LogWatch: {'restart agy' if (snapshot.get('log_watch') or {}).get('restart_required') else 'on'}"
-        )
-        top_lines = _draw_wrapped_lines(stdscr, 0, top, _color_attr(COLOR_HEADER, curses.A_BOLD))
+        top_parts = [
+            ("AGY CLI Manager", _color_attr(COLOR_HEADER, curses.A_BOLD)),
+            (" | Active: ", _severity_attr("muted")), (f"{snapshot.get('active') or '-'}", _color_attr(COLOR_HEADER, curses.A_BOLD)),
+            (" | Accounts: ", _severity_attr("muted")), (f"{len(accounts)}", _color_attr(COLOR_HEADER, curses.A_BOLD)),
+            (" | UI Refresh: ", _severity_attr("muted")), (f"{interval}s", _color_attr(COLOR_HEADER, curses.A_BOLD)),
+            (" | Sort: ", _severity_attr("muted")), (f"{sort_mode_name}", _color_attr(COLOR_HEADER, curses.A_BOLD)),
+            (" | Switch: ", _severity_attr("muted")), (f"{snapshot.get('switch_mode') or 'auto'}", _color_attr(COLOR_HEADER, curses.A_BOLD)),
+            (" | LogWatch: ", _severity_attr("muted")), (f"{'restart agy' if (snapshot.get('log_watch') or {}).get('restart_required') else 'on'}", _color_attr(COLOR_HEADER, curses.A_BOLD)),
+        ]
+        _draw_segments(stdscr, 0, top_parts)
+        top_lines = 1
         action_y = top_lines
         if not snapshot.get('active'):
             _draw_segments(stdscr, action_y, [(" [!] CRITICAL: NO ACTIVE ACCOUNT (All accounts exhausted or disabled) ", _severity_attr("bad", bold=True))])
             action_y += 1
-        action_lines = _draw_action_bar(stdscr, action_y)
-        legend_y = action_y + action_lines
-        legend_lines = _draw_legend(stdscr, legend_y)
-        divider_y = legend_y + legend_lines
-        _draw_hline(stdscr, divider_y, "=")
+        legend_lines = _draw_legend(stdscr, action_y)
+        divider_y = action_y + legend_lines
+        _draw_hline(stdscr, divider_y, "━")
 
         header_y = divider_y + 1
         _safe_addstr(stdscr, header_y, 0, "Accounts", _color_attr(COLOR_SECTION, curses.A_BOLD))
@@ -1655,7 +1656,7 @@ def _dashboard(stdscr, paths) -> int:
                 ("Summary", "none", _severity_attr("good", bold=True)),
             ]
 
-        overview_panel_height = 1 + len(overview_rows)
+        overview_panel_height = 1 + ((len(overview_rows) + 1) // 2 if use_two_columns else len(overview_rows))
 
         overview_top = max(header_y + 3, (height - 2) - overview_panel_height)
         middle_end_y = max(header_y + 2, overview_top - 1)
@@ -1681,23 +1682,33 @@ def _dashboard(stdscr, paths) -> int:
                 now_dt,
             )
 
-        _draw_hline(stdscr, overview_top - 1, "=")
+        _draw_hline(stdscr, overview_top - 1, "━")
         _safe_addstr(stdscr, overview_top, 0, "Overview", _color_attr(COLOR_SECTION, curses.A_BOLD))
         overview_y = overview_top + 1
         overview_label_width = max((len(label) for label, _, _ in overview_rows), default=0)
         for idx, (label, value, value_attr) in enumerate(overview_rows):
+            if use_two_columns:
+                row_y = overview_y + (idx // 2)
+                col_x = 0 if idx % 2 == 0 else width // 2
+                col_width = (width // 2) - 1
+            else:
+                row_y = overview_y + idx
+                col_x = 0
+                col_width = max(20, width - 1)
+            
             _draw_labeled_value_cell(
                 stdscr,
-                overview_y + idx,
-                0,
-                max(20, width - 1),
+                row_y,
+                col_x,
+                col_width,
                 label,
                 value,
                 value_attr,
                 label_width=overview_label_width,
             )
 
-        _draw_hline(stdscr, height - 2, "=")
+        _draw_hline(stdscr, height - 4, "━")
+        action_lines = _draw_action_bar(stdscr, height - 3)
         _safe_addstr(stdscr, height - 1, 0, f"Status: {message}"[: max(0, width - 1)], _message_attr(message))
         stdscr.refresh()
 

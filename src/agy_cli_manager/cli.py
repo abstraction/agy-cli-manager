@@ -572,6 +572,37 @@ def _usage_attr(meta: dict, selected: bool = False) -> int:
     return _severity_attr(_severity_from_remaining_percent(remaining), selected, bold=True)
 
 
+def _model_usage_attr(meta: dict, model_prefix: str, selected: bool = False) -> int:
+    short = _get_group_window(meta, f"{model_prefix}_short")
+    weekly = _get_group_window(meta, f"{model_prefix}_weekly")
+    
+    has_model = short.get("status", "unknown") != "unknown" or weekly.get("status", "unknown") != "unknown"
+    if not has_model and model_prefix == "gemini":
+        g_short = _get_group_window(meta, "gemini_short")
+        g_weekly = _get_group_window(meta, "gemini_weekly")
+        c_short = _get_group_window(meta, "claude_short")
+        c_weekly = _get_group_window(meta, "claude_weekly")
+        has_any = (g_short.get("status", "unknown") != "unknown" or g_weekly.get("status", "unknown") != "unknown" or
+                   c_short.get("status", "unknown") != "unknown" or c_weekly.get("status", "unknown") != "unknown")
+        
+        if not has_any:
+            windows = meta.get("usage_windows") if isinstance(meta.get("usage_windows"), dict) else {}
+            short = windows.get("short") if isinstance(windows.get("short"), dict) else {}
+            weekly = windows.get("weekly") if isinstance(windows.get("weekly"), dict) else {}
+
+    values = []
+    for w in (short, weekly):
+        val = w.get("value")
+        if isinstance(val, (int, float)):
+            values.append(val)
+        elif w.get("status") in ("due", "stale", "empty", "error"):
+            values.append(0)
+            
+    remaining = min(values) if values else None
+    return _severity_attr(_severity_from_remaining_percent(remaining), selected, bold=True)
+
+
+
 def _reset_attr(meta: dict, now: datetime, selected: bool = False) -> int:
     windows = meta.get("usage_windows") if isinstance(meta.get("usage_windows"), dict) else {}
     reset_times = []
@@ -897,7 +928,8 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
             {"key": "state", "title": "State", "width": 11},
             {"key": "plan", "title": "Plan", "width": 7},
             {"key": "issue", "title": "Health", "width": 7},
-            {"key": "usage", "title": "Remaining", "width": 18, "align": "right"},
+            {"key": "gemini", "title": "Gemini (S/W)", "width": 13, "align": "right"},
+            {"key": "claude", "title": "Claude (S/W)", "width": 13, "align": "right"},
             {"key": "reset", "title": "Reset In", "width": 15, "align": "right"},
             {"key": "next", "title": "Next", "width": 9, "align": "right"},
             {"key": "error", "title": "Last Error", "width": 18},
@@ -908,7 +940,8 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
             {"key": "name", "title": "Account", "width": 26},
             {"key": "state", "title": "State", "width": 10},
             {"key": "issue", "title": "Health", "width": 7},
-            {"key": "usage", "title": "Remaining", "width": 18, "align": "right"},
+            {"key": "gemini", "title": "Gemini (S/W)", "width": 13, "align": "right"},
+            {"key": "claude", "title": "Claude (S/W)", "width": 13, "align": "right"},
             {"key": "reset", "title": "Reset In", "width": 15, "align": "right"},
             {"key": "next", "title": "Next", "width": 8, "align": "right"},
         ]
@@ -918,7 +951,8 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
             {"key": "name", "title": "Account", "width": 22},
             {"key": "state", "title": "State", "width": 10},
             {"key": "issue", "title": "Health", "width": 7},
-            {"key": "usage", "title": "Remaining", "width": 18, "align": "right"},
+            {"key": "gemini", "title": "Gemini (S/W)", "width": 13, "align": "right"},
+            {"key": "claude", "title": "Claude (S/W)", "width": 13, "align": "right"},
             {"key": "next", "title": "Next", "width": 8, "align": "right"},
         ]
     return [
@@ -926,7 +960,8 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
         {"key": "name", "title": "Account", "width": 14},
         {"key": "state", "title": "State", "width": 8},
         {"key": "issue", "title": "Health", "width": 7},
-        {"key": "usage", "title": "Remaining", "width": 16},
+        {"key": "gemini", "title": "Gemini(S/W)", "width": 12, "align": "right"},
+        {"key": "claude", "title": "Claude(S/W)", "width": 12, "align": "right"},
         {"key": "next", "title": "Next", "width": 7},
     ]
 
@@ -972,6 +1007,8 @@ def _draw_account_row(
         "plan": format_plan_type_compact(meta.get("plan_type")),
         "issue": _problem_badge(problem_status),
         "usage": "-" if state == "disabled" else _format_usage(meta),
+        "gemini": "-" if state == "disabled" else _format_model_usage(meta, "gemini"),
+        "claude": "-" if state == "disabled" else _format_model_usage(meta, "claude"),
         "reset": "-" if state == "disabled" else _format_countdown(meta, now_dt),
         "next": "-" if state == "disabled" else _format_next_refresh(meta, now_dt),
         "fail": "-" if state == "disabled" else str(int(meta.get("fail_count", 0) or 0)),
@@ -1000,6 +1037,10 @@ def _draw_account_row(
             attr = _problem_attr(problem_status, selected)
         elif key == "usage":
             attr = _usage_attr(meta, selected)
+        elif key == "gemini":
+            attr = _model_usage_attr(meta, "gemini", selected)
+        elif key == "claude":
+            attr = _model_usage_attr(meta, "claude", selected)
         elif key == "reset":
             attr = _reset_attr(meta, now_dt, selected)
         elif key == "next":
@@ -1119,6 +1160,33 @@ def _format_usage(meta: dict) -> str:
     short = windows.get("short") if isinstance(windows.get("short"), dict) else {}
     weekly = windows.get("weekly") if isinstance(windows.get("weekly"), dict) else {}
     return _format_usage_value(_get_min_window(short, weekly))
+
+
+def _format_model_usage(meta: dict, model_prefix: str) -> str:
+    short = _get_group_window(meta, f"{model_prefix}_short")
+    weekly = _get_group_window(meta, f"{model_prefix}_weekly")
+    
+    has_model = short.get("status", "unknown") != "unknown" or weekly.get("status", "unknown") != "unknown"
+    if not has_model and model_prefix == "gemini":
+        g_short = _get_group_window(meta, "gemini_short")
+        g_weekly = _get_group_window(meta, "gemini_weekly")
+        c_short = _get_group_window(meta, "claude_short")
+        c_weekly = _get_group_window(meta, "claude_weekly")
+        has_any = (g_short.get("status", "unknown") != "unknown" or g_weekly.get("status", "unknown") != "unknown" or
+                   c_short.get("status", "unknown") != "unknown" or c_weekly.get("status", "unknown") != "unknown")
+        
+        if not has_any:
+            windows = meta.get("usage_windows") if isinstance(meta.get("usage_windows"), dict) else {}
+            short = windows.get("short") if isinstance(windows.get("short"), dict) else {}
+            weekly = windows.get("weekly") if isinstance(windows.get("weekly"), dict) else {}
+
+    if short.get("status", "unknown") == "unknown" and weekly.get("status", "unknown") == "unknown":
+        return "-"
+    
+    s_val = _format_usage_value(short)
+    w_val = _format_usage_value(weekly)
+    return f"{s_val:>4}/{w_val:<4}"
+
 
 def _get_nearest_reset(w1: dict, w2: dict, now) -> dict:
     r1 = _parse_iso_timestamp(w1.get("reset_at"))
@@ -1606,8 +1674,6 @@ def _dashboard(stdscr, paths) -> int:
                 overview_rows = [
                     ("Account", selected_name, _selected_name_attr(selected_meta.get("status", "standby"), True)),
                     ("Plan", format_plan_type_label(selected_meta.get("plan_type")), _plan_type_attr(selected_meta.get("plan_type"))),
-                    ("Remaining", _format_usage(selected_meta), _usage_attr(selected_meta)),
-                    ("Quota", f"{_format_window_summary(selected_meta, 'short', now_dt)} | {_format_window_summary(selected_meta, 'weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                                         ("Gemini Quota", f"Short: {_format_window_summary(selected_meta, 'gemini_short', now_dt)}, Weekly: {_format_window_summary(selected_meta, 'gemini_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                     ("Claude Quota", f"Short: {_format_window_summary(selected_meta, 'claude_short', now_dt)}, Weekly: {_format_window_summary(selected_meta, 'claude_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                     ("Issue", f"{verification.get('problem_status') or '-'} | {verification.get('recommended_action') or '-'}", _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
@@ -1617,7 +1683,6 @@ def _dashboard(stdscr, paths) -> int:
                 overview_rows = [
                     ("Account", selected_name, _selected_name_attr(selected_meta.get("status", "standby"), True)),
                     ("Health", _format_live_state(selected_meta, now_dt), _detail_value_attr(selected_meta, "Health", now_dt)),
-                    ("Remaining", _format_usage(selected_meta), _usage_attr(selected_meta)),
                     ("Summary", problem_summary.removeprefix("Summary: "), _problem_summary_attr(problem_counts)),
                     ("Identity", _format_identity(selected_meta), _detail_value_attr(selected_meta, "Identity", now_dt)),
                     ("Plan", format_plan_type_label(selected_meta.get("plan_type")), _plan_type_attr(selected_meta.get("plan_type"))),
@@ -1634,7 +1699,6 @@ def _dashboard(stdscr, paths) -> int:
                     ("Account", selected_name, _selected_name_attr(selected_meta.get("status", "standby"), True)),
                     ("Plan", format_plan_type_label(selected_meta.get("plan_type")), _plan_type_attr(selected_meta.get("plan_type"))),
                     ("Health", _format_live_state(selected_meta, now_dt), _detail_value_attr(selected_meta, "Health", now_dt)),
-                    ("Remaining", _format_usage(selected_meta), _usage_attr(selected_meta)),
                     ("Summary", problem_summary.removeprefix("Summary: "), _problem_summary_attr(problem_counts)),
                     ("Mode", f"{selected_meta.get('status', 'standby')} | {'enabled' if selected_meta.get('enabled', True) else 'disabled'}", _detail_value_attr(selected_meta, "State", now_dt)),
                     ("Next Refresh", _format_next_refresh(selected_meta, now_dt), _detail_value_attr(selected_meta, "Next Refresh", now_dt)),
@@ -1644,7 +1708,7 @@ def _dashboard(stdscr, paths) -> int:
                                                             ("Issue Detail", verification.get('summary') or '-', _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
                 ]
             if selected_meta.get("status") == "disabled":
-                disabled_keys = {"Remaining", "Quota", "Gemini Quota", "Claude Quota", "Next Refresh", "Failures"}
+                disabled_keys = {"Gemini Quota", "Claude Quota", "Next Refresh", "Failures"}
                 overview_rows = [
                     (label, "-" if label in disabled_keys else val, _severity_attr("muted") if label in disabled_keys else attr)
                     for label, val, attr in overview_rows

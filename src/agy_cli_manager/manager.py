@@ -1588,13 +1588,7 @@ def refresh_account_usage(
             load_response = _cloudcode_request(
                 access_token,
                 CODE_ASSIST_LOAD_PATH,
-                {
-                    "metadata": {
-                        "ideType": "ANTIGRAVITY",
-                        "platform": "PLATFORM_UNSPECIFIED",
-                        "pluginType": "GEMINI",
-                    }
-                },
+                {}
             )
         except PermissionError:
             with _isolated_keyring_warmup(source_home):
@@ -1603,13 +1597,7 @@ def refresh_account_usage(
             load_response = _cloudcode_request(
                 access_token,
                 CODE_ASSIST_LOAD_PATH,
-                {
-                    "metadata": {
-                        "ideType": "ANTIGRAVITY",
-                        "platform": "PLATFORM_UNSPECIFIED",
-                        "pluginType": "GEMINI",
-                    }
-                },
+                {}
             )
 
         project_id = _extract_project_id(load_response, source_home)
@@ -1626,9 +1614,13 @@ def refresh_account_usage(
             claude_weekly_window,
             bucket_count,
         ) = _parse_quota_windows_from_summary(quota_response)
-        plan_info = load_response.get("planInfo")
-        plan_type = plan_info.get("planType") if isinstance(plan_info, dict) else None
-        monthly = plan_info.get("monthlyPromptCredits") if isinstance(plan_info, dict) else None
+        current_tier = load_response.get("currentTier")
+        if isinstance(current_tier, dict):
+            plan_type = current_tier.get("id")
+        else:
+            plan_info = load_response.get("planInfo")
+            plan_type = plan_info.get("planType") if isinstance(plan_info, dict) else None
+        monthly = plan_info.get("monthlyPromptCredits") if 'plan_info' in locals() and isinstance(plan_info, dict) else None
         available = load_response.get("availablePromptCredits")
 
         result = UsageRefreshResult(

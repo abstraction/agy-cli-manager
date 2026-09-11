@@ -469,23 +469,6 @@ def _init_dashboard_colors() -> None:
         curses.use_default_colors()
     except curses.error:
         pass
-    if getattr(curses, "COLORS", 0) >= 16:
-        palette = {
-            COLOR_HEADER: 15,
-            COLOR_ACTIONS: 14,
-            COLOR_SECTION: 13,
-            COLOR_GOOD: 10,
-            COLOR_WARN: 11,
-            COLOR_BAD: 9,
-            COLOR_ACTIVE: 14,
-            COLOR_MUTED: 15,
-            COLOR_INFO: 14,
-            COLOR_SELECTED: 15,
-            COLOR_LABEL: 13,
-        }
-        for pair_id, color_id in palette.items():
-            curses.init_pair(pair_id, color_id, -1)
-        return
     curses.init_pair(COLOR_HEADER, curses.COLOR_CYAN, -1)
     curses.init_pair(COLOR_ACTIONS, curses.COLOR_BLUE, -1)
     curses.init_pair(COLOR_SECTION, curses.COLOR_WHITE, -1)

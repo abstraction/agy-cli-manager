@@ -71,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     verify = sub.add_parser("verify-accounts", help="Verify saved account auth/runtime usability")
     verify.add_argument("--json", action="store_true", help="Print machine-readable JSON")
-    switch_runtime = sub.add_parser("switch-runtime", help="Show current switch coordinator state")
+    switch_runtime = sub.add_parser("switch-runtime", help="Show the background account switcher state")
     switch_runtime.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     switch_history = sub.add_parser("switch-history", help="Show recent switch audit events")
     switch_history.add_argument("--json", action="store_true", help="Print machine-readable JSON")
@@ -94,8 +94,8 @@ def build_parser() -> argparse.ArgumentParser:
     proxy_clear = sub.add_parser("proxy-clear", help="Clear proxy metadata for an account")
     proxy_clear.add_argument("name")
     proxy_clear.add_argument("--json", action="store_true", help="Print machine-readable JSON")
-    sub.add_parser("apply-active", help="Re-apply the current active account to runtime and live_dir")
-    ensure_cmd = sub.add_parser("ensure-active", help="Evaluate switch policy and ensure there is a usable active account")
+    sub.add_parser("apply-active", help="Copy the active account to the runtime and live CLI directories")
+    ensure_cmd = sub.add_parser("ensure-active", help="Switch to a working account if the current one violates policy")
     ensure_cmd.add_argument("--force", action="store_true", help="Apply the policy even when switch mode is manual")
     ensure_cmd.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     switch_mode = sub.add_parser("switch-mode", help="Show or set account switching mode")
@@ -106,16 +106,16 @@ def build_parser() -> argparse.ArgumentParser:
     switch_policy.add_argument("--refresh-failure-threshold", type=int, dest="refresh_failure_threshold")
     switch_policy.add_argument("--candidate-strategy", choices=("balanced", "highest-short", "round-robin"))
     switch_policy.add_argument("--json", action="store_true", help="Print machine-readable JSON")
-    refresh_usage = sub.add_parser("refresh-usage", help="Fetch real Cloud Code quota and persist cached usage metadata")
+    refresh_usage = sub.add_parser("refresh-usage", help="Download Cloud Code quota and save the usage data")
     refresh_usage.add_argument("name", nargs="?")
     refresh_usage.add_argument("--agy-binary")
     refresh_usage.add_argument("--warmup-timeout-seconds", type=int, default=45)
     refresh_usage.add_argument("--json", action="store_true", help="Print machine-readable JSON")
-    refresh_due = sub.add_parser("refresh-due", help="Refresh the first due eligible account and persist cached usage metadata")
+    refresh_due = sub.add_parser("refresh-due", help="Update quota usage for the next eligible account")
     refresh_due.add_argument("--agy-binary")
     refresh_due.add_argument("--warmup-timeout-seconds", type=int, default=45)
     refresh_due.add_argument("--json", action="store_true", help="Print machine-readable JSON")
-    refresh_all = sub.add_parser("refresh-all", help="Refresh quota for all accounts sequentially with a delay to avoid rate limits")
+    refresh_all = sub.add_parser("refresh-all", help="Update quota for all accounts, pausing between each to prevent rate limits")
     refresh_all.add_argument("--agy-binary")
     refresh_all.add_argument("--warmup-timeout-seconds", type=int, default=45)
     refresh_all.add_argument("--delay-seconds", type=float, default=3.0, help="Seconds to wait between each account refresh (default: 3)")
@@ -166,7 +166,7 @@ def build_parser() -> argparse.ArgumentParser:
     enable = sub.add_parser("enable", help="Enable an account")
     enable.add_argument("name")
 
-    mark = sub.add_parser("mark-bad", help="Mark an account bad and optionally put it in cooldown")
+    mark = sub.add_parser("mark-bad", help="Flag an account as broken and start its cooldown timer")
     mark.add_argument("name")
     mark.add_argument("--reason", default="manual")
     mark.add_argument("--cooldown-minutes", type=int, default=60)
@@ -782,19 +782,19 @@ def _draw_legend(stdscr, y: int) -> int:
 
 def _draw_action_bar(stdscr, y: int) -> int:
     actions = [
-        ("N", "Login"),
+        ("N", "New Login"),
         ("I", "Import"),
         ("P", "Proxies"),
         ("Enter", "Activate"),
-        ("R", "Rotate"),
-        ("E", "Toggle"),
-        ("C", "Clear Bad"),
-        ("M", "Mark Bad"),
+        ("R", "Switch Next"),
+        ("E", "Toggle State"),
+        ("C", "Clear Broken"),
+        ("M", "Flag Broken"),
         ("D", "Delete"),
-        ("W", "Mode"),
-        ("Y", "Ack Restart"),
+        ("W", "Auto/Manual"),
+        ("Y", "Dismiss Warn"),
         ("S", "Sort"),
-        ("U", "Refresh Usage"),
+        ("U", "Update Quota"),
         ("T", "Refresh UI"),
         ("Q", "Quit"),
     ]
@@ -1497,7 +1497,7 @@ def _dashboard(stdscr, paths) -> int:
     refresh_idx = 0
     selected_idx = 0
     sort_idx = 2
-    message = "Live status refresh runs on due timers and manual refresh."
+    message = ""
     snapshot = _refresh_dashboard_snapshot(paths)
     last_refresh = 0.0
     painted_once = False
@@ -1577,12 +1577,11 @@ def _dashboard(stdscr, paths) -> int:
             f" | Sort: {sort_mode_name}"
             f" | Switch: {snapshot.get('switch_mode') or 'auto'}"
             f" | LogWatch: {'restart agy' if (snapshot.get('log_watch') or {}).get('restart_required') else 'on'}"
-            " | Live Status: Auto+Manual"
         )
         top_lines = _draw_wrapped_lines(stdscr, 0, top, _color_attr(COLOR_HEADER, curses.A_BOLD))
         action_y = top_lines
         if not snapshot.get('active'):
-            _draw_segments(stdscr, action_y, [(" [!] CRITICAL: NO ACTIVE ACCOUNT (All standby accounts exhausted) ", _severity_attr("bad", bold=True))])
+            _draw_segments(stdscr, action_y, [(" [!] CRITICAL: NO ACTIVE ACCOUNT (All accounts exhausted or disabled) ", _severity_attr("bad", bold=True))])
             action_y += 1
         action_lines = _draw_action_bar(stdscr, action_y)
         legend_y = action_y + action_lines
@@ -1610,7 +1609,7 @@ def _dashboard(stdscr, paths) -> int:
                     ("Quota", f"{_format_window_summary(selected_meta, 'short', now_dt)} | {_format_window_summary(selected_meta, 'weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                                         ("Gemini Quota", f"Short: {_format_window_summary(selected_meta, 'gemini_short', now_dt)}, Weekly: {_format_window_summary(selected_meta, 'gemini_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                     ("Claude Quota", f"Short: {_format_window_summary(selected_meta, 'claude_short', now_dt)}, Weekly: {_format_window_summary(selected_meta, 'claude_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
-                    ("Problem", f"{verification.get('problem_status') or '-'} | {verification.get('recommended_action') or '-'}", _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
+                    ("Issue", f"{verification.get('problem_status') or '-'} | {verification.get('recommended_action') or '-'}", _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
                     ("Summary", problem_summary.removeprefix("Summary: "), _problem_summary_attr(problem_counts)),
                 ]
             elif width >= 110:
@@ -1626,8 +1625,8 @@ def _dashboard(stdscr, paths) -> int:
                     ("Next Refresh", f"{_format_next_refresh(selected_meta, now_dt)} | {int(selected_meta.get('refresh_policy_seconds', 0) or 0)}s", _detail_value_attr(selected_meta, "Next Refresh", now_dt)),
                                                                                 ("Gemini Quota", f"Short: {_format_window_summary(selected_meta, 'gemini_short', now_dt)}, Weekly: {_format_window_summary(selected_meta, 'gemini_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                     ("Claude Quota", f"Short: {_format_window_summary(selected_meta, 'claude_short', now_dt)}, Weekly: {_format_window_summary(selected_meta, 'claude_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
-                    ("Problem", f"{verification.get('problem_status') or '-'} | {verification.get('recommended_action') or '-'}", _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
-                    ("Problem Note", verification.get('summary') or '-', _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
+                    ("Issue", f"{verification.get('problem_status') or '-'} | {verification.get('recommended_action') or '-'}", _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
+                    ("Issue Detail", verification.get('summary') or '-', _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
                 ]
             else:
                 overview_rows = [
@@ -1640,8 +1639,8 @@ def _dashboard(stdscr, paths) -> int:
                     ("Next Refresh", _format_next_refresh(selected_meta, now_dt), _detail_value_attr(selected_meta, "Next Refresh", now_dt)),
                                         ("Gemini Quota", f"Short: {_format_window_summary(selected_meta, 'gemini_short', now_dt)}, Weekly: {_format_window_summary(selected_meta, 'gemini_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                     ("Claude Quota", f"Short: {_format_window_summary(selected_meta, 'claude_short', now_dt)}, Weekly: {_format_window_summary(selected_meta, 'claude_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
-                    ("Problem", f"{verification.get('problem_status') or '-'} | {verification.get('recommended_action') or '-'}", _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
-                                                            ("Note", verification.get('summary') or '-', _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
+                    ("Issue", f"{verification.get('problem_status') or '-'} | {verification.get('recommended_action') or '-'}", _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
+                                                            ("Issue Detail", verification.get('summary') or '-', _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
                 ]
             if selected_meta.get("status") == "disabled":
                 disabled_keys = {"Remaining", "Quota", "Gemini Quota", "Claude Quota", "Next Refresh", "Failures"}
@@ -1779,7 +1778,7 @@ def _dashboard(stdscr, paths) -> int:
             clear_restart_required(paths)
             snapshot = _refresh_dashboard_snapshot(paths)
             last_refresh = time.time()
-            message = "Acknowledged agy restart; log-watch can rotate again."
+            message = "Cleared warning banner. Auto-switch can proceed."
             continue
         if not accounts:
             message = "No accounts available for this action."
@@ -1801,21 +1800,21 @@ def _dashboard(stdscr, paths) -> int:
                 message = f"Activated {selected_name}." if previous != selected_name else f"{selected_name} already active."
             elif key in (ord("r"), ord("R")):
                 target = switch_next(paths)
-                message = f"Rotated to {target}."
+                message = f"Switched to {target}."
             elif key in (ord("w"), ord("W")):
                 next_mode = "manual" if (snapshot.get("switch_mode") or "auto") == "auto" else "auto"
                 set_switch_mode(paths, next_mode)
-                message = f"Switch mode set to {next_mode}."
+                message = f"Auto-switch mode set to {next_mode}."
             elif key in (ord("e"), ord("E")):
                 enabled = bool(selected_meta.get("enabled", True))
                 set_enabled(paths, selected_name, not enabled)
                 message = f"{'Enabled' if not enabled else 'Disabled'} {selected_name}."
             elif key in (ord("c"), ord("C")):
                 clear_bad(paths, selected_name)
-                message = f"Cleared bad state for {selected_name}."
+                message = f"Cleared broken flag for {selected_name}."
             elif key in (ord("m"), ord("M")):
                 mark_bad(paths, selected_name, "manual", 60)
-                message = f"Marked {selected_name} bad with 60m cooldown."
+                message = f"Flagged {selected_name} as broken (60m cooldown)."
             elif key in (ord("d"), ord("D")):
                 # Inline confirmation prompt at the bottom of the screen
                 height, width = stdscr.getmaxyx()

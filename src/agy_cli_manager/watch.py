@@ -393,9 +393,9 @@ def poll_quota_logs(
 
         if not events_for_rotate:
             if events and watch_state.get("restart_required"):
-                message = "quota error observed; waiting for agy restart"
+                message = "Hit quota limit. Restart your CLI process to continue."
             elif events and ignored_logs:
-                message = "agy restart detected; old quota errors ignored"
+                message = "CLI restart detected. Ignoring old quota errors."
         elif events_for_rotate:
             should_rotate = rotate and (force_switch or switch_mode == "auto")
             if should_rotate:
@@ -414,24 +414,24 @@ def poll_quota_logs(
                         source_logs=sorted(next_cursors),
                     )
                     message = (
-                        f"rotated {rotation.previous_active} -> {rotation.switched_to}; "
-                        "restart agy to pick up the new token"
+                        f"Switched from {rotation.previous_active} to {rotation.switched_to}. "
+                        "Restart your CLI process to use the new token."
                     )
                     if on_rotate:
                         on_rotate_cmd = on_rotate
                 elif rotation.outcome == "already_switched":
-                    message = f"already switched to {rotation.active or '-'}"
+                    message = f"Already switched to {rotation.active or '-'}"
                 elif switch_mode == "manual" and not force_switch:
-                    message = "quota error observed; switch-mode is manual"
+                    message = "Hit quota limit, but auto-switch is disabled."
                 else:
-                    message = f"quota error observed; outcome={rotation.outcome}"
+                    message = f"Hit quota limit. Switch result: {rotation.outcome}"
             else:
                 message = (
-                    f"quota error observed ({events_for_rotate[-1].kind}); "
-                    "rotation skipped"
+                    f"Hit quota limit ({events_for_rotate[-1].kind}). "
+                    "Auto-switch skipped."
                 )
                 if switch_mode == "manual" and not force_switch:
-                    message = "quota error observed; switch-mode is manual"
+                    message = "Hit quota limit, but auto-switch is disabled."
 
         save_log_watch_state(paths.root, watch_state)
         result = WatchPollResult(
@@ -461,16 +461,7 @@ def watch_poll_payload(result: WatchPollResult) -> dict:
 
 
 def format_watch_poll(result: WatchPollResult) -> str:
-    if not result.events and not result.rotated:
-        return f"watch: {result.message}"
-    parts = [
-        f"watch: {result.message}",
-        f"events={len(result.events)}",
-        f"kind={result.events[-1].kind if result.events else '-'}",
-        f"reset={result.events[-1].reset_hint if result.events and result.events[-1].reset_hint else '-'}",
-        f"mode={result.switch_mode}",
-    ]
-    return " ".join(parts)
+    return f"Watch: {result.message}"
 
 
 def watch_quota_logs(

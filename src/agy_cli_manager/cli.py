@@ -892,42 +892,42 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
     if width >= 160:
         return [
             {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
-            {"key": "name", "title": "Name", "width": 32},
+            {"key": "name", "title": "Account", "width": 32},
             {"key": "state", "title": "State", "width": 11},
             {"key": "plan", "title": "Plan", "width": 7},
-            {"key": "issue", "title": "Issue", "width": 7},
+            {"key": "issue", "title": "Health", "width": 7},
             {"key": "usage", "title": "Remaining", "width": 18},
             {"key": "reset", "title": "Reset In", "width": 15},
-            {"key": "next", "title": "Next Ref", "width": 9},
-            {"key": "fail", "title": "Fail", "width": 5, "align": "right"},
+            {"key": "next", "title": "Next", "width": 9},
+            {"key": "fail", "title": "Fails", "width": 5, "align": "right"},
             {"key": "error", "title": "Last Error", "width": 18},
         ]
     if width >= 130:
         return [
             {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
-            {"key": "name", "title": "Name", "width": 26},
+            {"key": "name", "title": "Account", "width": 26},
             {"key": "state", "title": "State", "width": 10},
-            {"key": "issue", "title": "Issue", "width": 7},
+            {"key": "issue", "title": "Health", "width": 7},
             {"key": "usage", "title": "Remaining", "width": 18},
             {"key": "reset", "title": "Reset In", "width": 15},
             {"key": "next", "title": "Next", "width": 8},
-            {"key": "fail", "title": "Fail", "width": 4, "align": "right"},
+            {"key": "fail", "title": "Fails", "width": 5, "align": "right"},
         ]
     if width >= 96:
         return [
             {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
-            {"key": "name", "title": "Name", "width": 22},
+            {"key": "name", "title": "Account", "width": 22},
             {"key": "state", "title": "State", "width": 10},
-            {"key": "issue", "title": "Issue", "width": 7},
+            {"key": "issue", "title": "Health", "width": 7},
             {"key": "usage", "title": "Remaining", "width": 18},
             {"key": "next", "title": "Next", "width": 8},
-            {"key": "fail", "title": "Fail", "width": 4, "align": "right"},
+            {"key": "fail", "title": "Fails", "width": 5, "align": "right"},
         ]
     return [
         {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
-        {"key": "name", "title": "Name", "width": 14},
+        {"key": "name", "title": "Account", "width": 14},
         {"key": "state", "title": "State", "width": 8},
-        {"key": "issue", "title": "Issue", "width": 6},
+        {"key": "issue", "title": "Health", "width": 7},
         {"key": "usage", "title": "Remaining", "width": 16},
         {"key": "next", "title": "Next", "width": 7},
     ]
@@ -938,12 +938,20 @@ def _draw_account_table_header(stdscr, y: int, layout: list[dict[str, str | int]
     for idx, col in enumerate(layout):
         if idx:
             segments.append(("  ", 0))
-        segments.append(
-            (
-                _fit_cell(str(col["title"]), int(col["width"]), str(col.get("align") or "left")),
-                _color_attr(COLOR_SECTION, curses.A_BOLD | curses.A_UNDERLINE),
-            )
-        )
+        title = str(col["title"])
+        width = int(col["width"])
+        align = str(col.get("align") or "left")
+        
+        if align == "right":
+            padding = width - len(title)
+            if padding > 0:
+                segments.append((" " * padding, _color_attr(COLOR_SECTION, curses.A_BOLD)))
+            segments.append((title, _color_attr(COLOR_SECTION, curses.A_BOLD | curses.A_UNDERLINE)))
+        else:
+            segments.append((title, _color_attr(COLOR_SECTION, curses.A_BOLD | curses.A_UNDERLINE)))
+            padding = width - len(title)
+            if padding > 0:
+                segments.append((" " * padding, _color_attr(COLOR_SECTION, curses.A_BOLD)))
     _draw_segments(stdscr, y, segments)
 
 
@@ -965,11 +973,11 @@ def _draw_account_row(
         "state": state,
         "plan": format_plan_type_compact(meta.get("plan_type")),
         "issue": _problem_badge(problem_status),
-        "usage": _format_usage(meta),
-        "reset": _format_countdown(meta, now_dt),
-        "next": _format_next_refresh(meta, now_dt),
-        "fail": str(int(meta.get("fail_count", 0) or 0)),
-        "error": _format_last_error(meta),
+        "usage": "-" if state == "disabled" else _format_usage(meta),
+        "reset": "-" if state == "disabled" else _format_countdown(meta, now_dt),
+        "next": "-" if state == "disabled" else _format_next_refresh(meta, now_dt),
+        "fail": "-" if state == "disabled" else str(int(meta.get("fail_count", 0) or 0)),
+        "error": "-" if state == "disabled" else _format_last_error(meta),
     }
     fail_count = int(meta.get("fail_count", 0) or 0)
     segments: list[tuple[str, int]] = []
@@ -1637,6 +1645,12 @@ def _dashboard(stdscr, paths) -> int:
                     ("Claude Quota", f"Short: {_format_window_summary(selected_meta, 'claude_short', now_dt)}, Weekly: {_format_window_summary(selected_meta, 'claude_weekly', now_dt)}", _detail_value_attr(selected_meta, "Short Window", now_dt)),
                     ("Problem", f"{verification.get('problem_status') or '-'} | {verification.get('recommended_action') or '-'}", _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
                                                             ("Note", verification.get('summary') or '-', _severity_attr("bad" if verification.get("problem_status") not in {None, 'ok', 'stale'} else "info")),
+                ]
+            if selected_meta.get("status") == "disabled":
+                disabled_keys = {"Remaining", "Quota", "Gemini Quota", "Claude Quota", "Next Refresh", "Failures"}
+                overview_rows = [
+                    (label, "-" if label in disabled_keys else val, _severity_attr("muted") if label in disabled_keys else attr)
+                    for label, val, attr in overview_rows
                 ]
         else:
             overview_rows = [

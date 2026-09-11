@@ -1855,7 +1855,7 @@ def _dashboard(stdscr, paths) -> int:
                 continue
             snapshot = _refresh_dashboard_snapshot(paths)
             last_refresh = time.time()
-        except ValueError as exc:
+        except (ValueError, OSError) as exc:
             message = f"Error: {exc}"
 
     return 0

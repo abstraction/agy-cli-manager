@@ -24,6 +24,7 @@ else:
     import fcntl
 
 from agy_cli_manager.watch import get_log_watch_snapshot
+from agy_cli_manager.log import get_logger
 
 
 MANAGED_PROFILE_FILES = (
@@ -55,9 +56,9 @@ def _get_dynamic_user_agent() -> str:
         result = subprocess.run(["agy", "--version"], capture_output=True, text=True, timeout=1.0)
         version = result.stdout.strip()
         if not version:
-            version = "1.23.0"
+            version = "1.2.1"
     except Exception:
-        version = "1.23.0"
+        version = "1.2.1"
     
     os_name = "darwin" if platform.system().lower() == "darwin" else "linux"
     arch = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "amd64"
@@ -689,6 +690,7 @@ def _sync_keyring_to_home(target_home: Path) -> bool:
 
 
 def _sync_home_to_keyring(source_home: Path) -> bool:
+    _clear_keyring_token()
     try:
         data = _load_antigravity_token_state(_resolve_home_source(source_home))
         return _save_keyring_token(data)
@@ -699,6 +701,7 @@ def _sync_home_to_keyring(source_home: Path) -> bool:
 @contextmanager
 def _isolated_keyring_warmup(source_home: Path):
     restore_keyring = _load_keyring_token()
+    _clear_keyring_token()
     _sync_home_to_keyring(source_home)
     try:
         yield
@@ -864,14 +867,6 @@ def _load_antigravity_token_state(home_root: Path) -> dict:
     data = _read_json_if_exists(path)
     if isinstance(data, dict) and isinstance(data.get("token"), dict):
         return data
-    keyring_data = _load_keyring_token()
-    if isinstance(keyring_data, dict) and isinstance(keyring_data.get("token"), dict):
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(keyring_data, indent=2) + "\n", encoding="utf-8")
-        except Exception:
-            pass
-        return keyring_data
     if not isinstance(data, dict):
         raise ValueError(f"Antigravity token file not found or invalid: {path}")
     token = data.get("token")
@@ -1365,6 +1360,7 @@ def pick_due_refresh_account(paths: ManagerPaths) -> str | None:
 
 
 def ensure_active_account(paths: ManagerPaths, *, force: bool = False) -> EnsureActiveResult:
+    logger = get_logger(paths.root)
     snapshot = get_status_snapshot(paths)
     switch_mode = snapshot.get("switch_mode", DEFAULT_SWITCH_MODE)
     switch_policy = snapshot.get("switch_policy") or _default_switch_policy()
@@ -1384,16 +1380,19 @@ def ensure_active_account(paths: ManagerPaths, *, force: bool = False) -> Ensure
         )
 
     if not active_name:
+        logger.info("ensure_active_account: No active account, finding candidate...")
         with manager_lock(paths):
             state = sync_state_from_disk(paths, load_state(paths))
             switched_to = _best_switch_candidate(paths, state)
             if switched_to:
+                logger.info(f"ensure_active_account: Found candidate {switched_to}")
                 _copy_active_runtime(paths, switched_to)
                 state["active"] = switched_to
                 state = sync_state_from_disk(paths, state)
                 _sync_runtime_to_live_dir(paths, state)
                 save_state(paths, state)
         if not switched_to:
+            logger.info("ensure_active_account: No candidates available.")
             return EnsureActiveResult(
                 triggered=False,
                 switch_mode=switch_mode,
@@ -2419,7 +2418,20 @@ def delete_account(paths: ManagerPaths, name: str) -> bool:
 
         target = account_dir(paths, name)
         if target.exists():
-            shutil.rmtree(target)
+            # Retry loop to handle a race where `agy` writes new files into its
+            # log/brain dirs while rmtree is mid-traversal, causing ENOTEMPTY on
+            # the final rmdir of a directory that had been emptied but then refilled.
+            _retries = 5
+            for _attempt in range(_retries):
+                try:
+                    shutil.rmtree(target)
+                    break
+                except OSError as exc:
+                    import errno as _errno
+                    if exc.errno != _errno.ENOTEMPTY or _attempt == _retries - 1:
+                        raise
+                    import time as _time
+                    _time.sleep(0.2)
 
     return was_active
 
@@ -2454,12 +2466,15 @@ def _sync_runtime_to_live_dir(paths: ManagerPaths, state: dict) -> None:
 
 
 def switch_account(paths: ManagerPaths, name: str) -> str:
+    logger = get_logger(paths.root)
     with manager_lock(paths):
         state = sync_state_from_disk(paths, load_state(paths))
         meta = state["accounts"].get(name)
         if meta is None:
+            logger.error(f"switch_account failed: Account not found: {name}")
             raise ValueError(f"Account not found: {name}")
         if not meta.get("enabled", True):
+            logger.error(f"switch_account failed: Account is disabled: {name}")
             raise ValueError(f"Account is disabled: {name}")
         cooldown_until = parse_timestamp(meta.get("cooldown_until"))
         if cooldown_until and cooldown_until > utc_now():
@@ -2469,11 +2484,13 @@ def switch_account(paths: ManagerPaths, name: str) -> str:
             meta["last_live_check_error"] = None
 
         previous = state.get("active")
+        logger.info(f"Switching account from {previous} to {name}")
         _copy_active_runtime(paths, name)
         state["active"] = name
         state = sync_state_from_disk(paths, state)
         _sync_runtime_to_live_dir(paths, state)
         save_state(paths, state)
+        logger.info(f"Successfully switched account to {name}")
         return previous or ""
 
 
@@ -2668,6 +2685,7 @@ def set_enabled(paths: ManagerPaths, name: str, enabled: bool) -> None:
 
 
 def mark_bad(paths: ManagerPaths, name: str, reason: str, cooldown_minutes: int) -> None:
+    logger = get_logger(paths.root)
     if cooldown_minutes < 0:
         raise ValueError("Cooldown minutes must be non-negative.")
     with manager_lock(paths):
@@ -2675,6 +2693,7 @@ def mark_bad(paths: ManagerPaths, name: str, reason: str, cooldown_minutes: int)
         meta = state["accounts"].get(name)
         if meta is None:
             raise ValueError(f"Account not found: {name}")
+        logger.warning(f"Marking account '{name}' bad. Reason: {reason}. Cooldown: {cooldown_minutes}m")
         meta["last_error"] = reason
         meta["fail_count"] = int(meta.get("fail_count", 0)) + 1
         if cooldown_minutes > 0:
@@ -2682,17 +2701,20 @@ def mark_bad(paths: ManagerPaths, name: str, reason: str, cooldown_minutes: int)
         else:
             meta["cooldown_until"] = None
         if state.get("active") == name:
+            logger.info(f"Unsetting active account because '{name}' was marked bad.")
             state["active"] = None
         state = sync_state_from_disk(paths, state)
         save_state(paths, state)
 
 
 def clear_bad(paths: ManagerPaths, name: str) -> None:
+    logger = get_logger(paths.root)
     with manager_lock(paths):
         state = sync_state_from_disk(paths, load_state(paths))
         meta = state["accounts"].get(name)
         if meta is None:
             raise ValueError(f"Account not found: {name}")
+        logger.info(f"Clearing bad state for account '{name}'")
         meta["last_error"] = None
         meta["cooldown_until"] = None
         meta["refresh_fail_count"] = 0
@@ -2772,14 +2794,18 @@ def set_live_dir(paths: ManagerPaths, live_dir: Path | None) -> None:
 
 
 def apply_active(paths: ManagerPaths) -> str:
+    logger = get_logger(paths.root)
     with manager_lock(paths):
         state = sync_state_from_disk(paths, load_state(paths))
         active = state.get("active")
         if not active:
+            logger.error("apply_active failed: No active account is set")
             raise ValueError("No active account is set.")
+        logger.info(f"Applying active account: {active}")
         _copy_active_runtime(paths, active)
         _sync_runtime_to_live_dir(paths, state)
         save_state(paths, state)
+        logger.info(f"Successfully applied active account: {active}")
         return active
 
 
@@ -2793,11 +2819,12 @@ def rotate_after_failure(
     trigger: str = "unknown",
     request_id: str | None = None,
 ) -> RotationResult:
+    logger = get_logger(paths.root)
     if cooldown_minutes < 0:
         raise ValueError("Cooldown minutes must be non-negative.")
 
     with manager_lock(paths):
-        return rotate_after_failure_locked(
+        result = rotate_after_failure_locked(
             paths,
             reason,
             cooldown_minutes=cooldown_minutes,
@@ -2807,6 +2834,8 @@ def rotate_after_failure(
             trigger=trigger,
             request_id=request_id,
         )
+        logger.info(f"rotate_after_failure finished: outcome={result.outcome}, switched_to={result.switched_to}")
+        return result
 
 
 def rotate_after_failure_locked(
@@ -2819,6 +2848,8 @@ def rotate_after_failure_locked(
     trigger: str = "unknown",
     request_id: str | None = None,
 ) -> RotationResult:
+    logger = get_logger(paths.root)
+    logger.info(f"rotate_after_failure_locked called: reason={reason}, trigger={trigger}, force_switch={force_switch}")
     if cooldown_minutes < 0:
         raise ValueError("Cooldown minutes must be non-negative.")
 

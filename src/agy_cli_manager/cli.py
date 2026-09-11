@@ -770,11 +770,11 @@ def _draw_legend(stdscr, y: int) -> int:
             ("  ", 0),
             ("* active", _severity_attr("active", bold=True)),
             ("  ", 0),
-            ("ready", _severity_attr("good")),
+            ("ok", _severity_attr("good")),
             ("  ", 0),
-            ("expiring", _severity_attr("warn")),
+            ("low", _severity_attr("warn")),
             ("  ", 0),
-            ("failed", _severity_attr("bad")),
+            ("empty/err", _severity_attr("bad")),
         ],
     )
     return 1

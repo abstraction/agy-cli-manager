@@ -785,17 +785,17 @@ def _draw_action_bar(stdscr, y: int) -> int:
         ("N", "Login"),
         ("I", "Import"),
         ("P", "Proxies"),
-        ("Enter/A", "Activate"),
+        ("Enter", "Activate"),
         ("R", "Rotate"),
-        ("E", "Enable/Disable"),
-        ("C", "ClearBad"),
-        ("M", "MarkBad"),
+        ("E", "Toggle"),
+        ("C", "Clear Bad"),
+        ("M", "Mark Bad"),
         ("D", "Delete"),
         ("W", "Mode"),
-        ("Y", "AckRestart"),
+        ("Y", "Ack Restart"),
         ("S", "Sort"),
-        ("U", "Live Usage Refresh"),
-        ("T", "UI Refresh"),
+        ("U", "Refresh Usage"),
+        ("T", "Refresh UI"),
         ("Q", "Quit"),
     ]
     height, width = stdscr.getmaxyx()
@@ -899,7 +899,6 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
             {"key": "usage", "title": "Remaining", "width": 18},
             {"key": "reset", "title": "Reset In", "width": 15},
             {"key": "next", "title": "Next", "width": 9},
-            {"key": "fail", "title": "Fails", "width": 5, "align": "right"},
             {"key": "error", "title": "Last Error", "width": 18},
         ]
     if width >= 130:
@@ -911,7 +910,6 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
             {"key": "usage", "title": "Remaining", "width": 18},
             {"key": "reset", "title": "Reset In", "width": 15},
             {"key": "next", "title": "Next", "width": 8},
-            {"key": "fail", "title": "Fails", "width": 5, "align": "right"},
         ]
     if width >= 96:
         return [
@@ -921,7 +919,6 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
             {"key": "issue", "title": "Health", "width": 7},
             {"key": "usage", "title": "Remaining", "width": 18},
             {"key": "next", "title": "Next", "width": 8},
-            {"key": "fail", "title": "Fails", "width": 5, "align": "right"},
         ]
     return [
         {"key": "marker", "title": "Sel", "width": 4, "align": "right"},

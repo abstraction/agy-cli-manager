@@ -1827,16 +1827,21 @@ def _dashboard(stdscr, paths) -> int:
                 mark_bad(paths, selected_name, "manual", 60)
                 message = f"Flagged {selected_name} as broken (60m cooldown)."
             elif key in (ord("d"), ord("D")):
-                # Inline confirmation prompt at the bottom of the screen
+                # Two-row confirmation: prompt on second-to-last line, input on last line.
+                # This avoids the bug where a long prompt string pushes the getstr cursor
+                # so far right that no characters can be entered.
                 height, width = stdscr.getmaxyx()
-                prompt = f"Delete '{selected_name}'? Type name to confirm (Esc to cancel): "
-                _safe_addstr(stdscr, height - 1, 0, prompt[: width - 1], _severity_attr("bad", bold=True))
+                prompt = f"Delete '{selected_name}'? Type name to confirm (Esc to cancel):"
+                _safe_addstr(stdscr, height - 2, 0, prompt[: width - 1], _severity_attr("bad", bold=True))
+                stdscr.clrtoeol()
+                input_prefix = "> "
+                _safe_addstr(stdscr, height - 1, 0, input_prefix, _severity_attr("bad", bold=True))
                 stdscr.clrtoeol()
                 stdscr.refresh()
                 curses.echo()
                 curses.curs_set(1)
                 try:
-                    raw = stdscr.getstr(height - 1, min(len(prompt), width - 2), 64)
+                    raw = stdscr.getstr(height - 1, len(input_prefix), width - len(input_prefix) - 1)
                     confirm_text = raw.decode("utf-8", errors="replace").strip()
                 except Exception:
                     confirm_text = ""

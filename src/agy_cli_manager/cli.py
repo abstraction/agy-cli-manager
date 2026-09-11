@@ -1840,12 +1840,14 @@ def _dashboard(stdscr, paths) -> int:
                 stdscr.refresh()
                 curses.echo()
                 curses.curs_set(1)
+                stdscr.nodelay(False)  # must block while user types
                 try:
                     raw = stdscr.getstr(height - 1, len(input_prefix), width - len(input_prefix) - 1)
                     confirm_text = raw.decode("utf-8", errors="replace").strip()
                 except Exception:
                     confirm_text = ""
                 finally:
+                    stdscr.nodelay(True)
                     curses.noecho()
                     curses.curs_set(0)
                 if confirm_text != selected_name:

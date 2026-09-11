@@ -29,3 +29,7 @@ To ensure that local code changes take effect immediately without needing to rei
 uv tool install -e . --force
 ```
 Once installed as editable, you do not need to rerun the install command when you modify `.py` files, as they are symlinked/referenced directly. Reinstallation is only required if you change dependencies or entry points in `pyproject.toml`.
+
+## 6. Logging
+- A rolling log of critical manager actions (account switches, failovers, marking accounts bad, etc.) is kept for 7 days.
+- **Location:** The log file is located at `~/.agy-cli-manager/logs/manager.log`.

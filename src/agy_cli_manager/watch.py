@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from agy_cli_manager.log import get_logger
 
 
 DEFAULT_WATCH_POLL_SECONDS = 1.0
@@ -360,6 +361,7 @@ def poll_quota_logs(
         rotate_after_failure_locked,
     )
 
+    logger = get_logger(paths.root)
     on_rotate_cmd = None
     with manager_lock(paths):
         state = load_state(paths)
@@ -399,6 +401,7 @@ def poll_quota_logs(
         elif events_for_rotate:
             should_rotate = rotate and (force_switch or switch_mode == "auto")
             if should_rotate:
+                logger.info("Log-watch initiating rotate_after_failure due to quota limit")
                 rotation = rotate_after_failure_locked(
                     paths,
                     reason="quota",
@@ -408,6 +411,7 @@ def poll_quota_logs(
                 )
                 rotated = rotation.outcome == "switched"
                 if rotated:
+                    logger.info(f"Log-watch successfully rotated to {rotation.switched_to}")
                     _arm_restart(
                         watch_state,
                         account=rotation.switched_to,
@@ -420,12 +424,16 @@ def poll_quota_logs(
                     if on_rotate:
                         on_rotate_cmd = on_rotate
                 elif rotation.outcome == "already_switched":
+                    logger.info(f"Log-watch skipped rotation: already switched to {rotation.active}")
                     message = f"Already switched to {rotation.active or '-'}"
                 elif switch_mode == "manual" and not force_switch:
+                    logger.info("Log-watch skipped rotation: manual mode")
                     message = "Hit quota limit, but auto-switch is disabled."
                 else:
+                    logger.info(f"Log-watch rotation failed or skipped: outcome={rotation.outcome}")
                     message = f"Hit quota limit. Switch result: {rotation.outcome}"
             else:
+                logger.info(f"Log-watch skipped rotation: switch_mode={switch_mode}, force_switch={force_switch}")
                 message = (
                     f"Hit quota limit ({events_for_rotate[-1].kind}). "
                     "Auto-switch skipped."

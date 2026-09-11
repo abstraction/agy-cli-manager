@@ -47,7 +47,23 @@ VALID_CANDIDATE_STRATEGIES = ("balanced", "highest-short", "round-robin")
 DEFAULT_SWITCH_DEDUPE_SECONDS = 15
 DEFAULT_SWITCH_HISTORY_LIMIT = 20
 CODE_ASSIST_BASE_URL = "https://daily-cloudcode-pa.googleapis.com"
-CODE_ASSIST_USER_AGENT = "antigravity"
+import subprocess
+import platform
+
+def _get_dynamic_user_agent() -> str:
+    try:
+        result = subprocess.run(["agy", "--version"], capture_output=True, text=True, timeout=1.0)
+        version = result.stdout.strip()
+        if not version:
+            version = "1.23.0"
+    except Exception:
+        version = "1.23.0"
+    
+    os_name = "darwin" if platform.system().lower() == "darwin" else "linux"
+    arch = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "amd64"
+    return f"antigravity/{version} {os_name}/{arch}"
+
+CODE_ASSIST_USER_AGENT = _get_dynamic_user_agent()
 CODE_ASSIST_LOAD_PATH = "/v1internal:loadCodeAssist"
 CODE_ASSIST_QUOTA_PATH = "/v1internal:retrieveUserQuota"
 CODE_ASSIST_QUOTA_SUMMARY_PATH = "/v1internal:retrieveUserQuotaSummary"

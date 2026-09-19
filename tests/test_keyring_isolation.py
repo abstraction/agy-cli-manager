@@ -26,7 +26,7 @@ class TestKeyringIsolation(unittest.TestCase):
             
         mock_sync_out.assert_called_once_with(target_home)
         mock_save.assert_called_once_with({"token": "active_token"})
-        mock_clear.assert_not_called()
+        mock_clear.assert_called_once()
 
     @patch("agy_cli_manager.manager._load_keyring_token")
     @patch("agy_cli_manager.manager._sync_home_to_keyring")
@@ -44,7 +44,7 @@ class TestKeyringIsolation(unittest.TestCase):
             
         mock_sync_out.assert_called_once_with(target_home)
         mock_save.assert_not_called()
-        mock_clear.assert_called_once()
+        self.assertEqual(mock_clear.call_count, 2)
 
     @patch("agy_cli_manager.manager._load_keyring_token")
     @patch("agy_cli_manager.manager._sync_home_to_keyring")

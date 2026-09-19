@@ -7,6 +7,8 @@
 >
 > This fork adds OS keyring isolation so background quota checks stop wiping out your active terminal session. It also adds user-agent spoofing, fixes API parsing, and overhauls the TUI.
 
+---
+
 `agy-cli-manager` is a Python account manager for Antigravity CLI (`agy`) with active-standby failover, quota-aware switching, and machine-readable automation APIs.
 
 It helps you run multiple Antigravity CLI accounts more safely by:

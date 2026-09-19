@@ -653,6 +653,9 @@ def _problem_badge(problem_status: str | None) -> str:
         "disabled": "OFF",
         "missing_auth": "MISS",
         "logged_out": "OUT",
+        "token_mismatch": "MISMAT",
+        "token_duplicate": "DUP",
+        "duplicate_token": "DUP",
     }
     return mapping.get((problem_status or "").lower(), "?")
 
@@ -663,14 +666,14 @@ def _problem_attr(problem_status: str | None, selected: bool = False) -> int:
         return _severity_attr("good", selected, bold=True)
     if normalized in {"stale", "cooldown", "disabled"}:
         return _severity_attr("warn", selected, bold=True)
-    if normalized in {"refresh_failed", "missing_auth", "logged_out"}:
+    if normalized in {"refresh_failed", "missing_auth", "logged_out", "token_mismatch", "token_duplicate", "duplicate_token"}:
         attr = _severity_attr("bad", selected, bold=True)
         return attr | curses.A_REVERSE if not selected else attr
     return _severity_attr("muted", selected)
 
 
 def _problem_summary_attr(problem_counts: dict[str, int]) -> int:
-    if any(problem_counts.get(key, 0) > 0 for key in ("logged_out", "missing_auth", "refresh_failed")):
+    if any(problem_counts.get(key, 0) > 0 for key in ("logged_out", "missing_auth", "refresh_failed", "token_mismatch", "token_duplicate", "duplicate_token")):
         return _severity_attr("bad", bold=True)
     if any(problem_counts.get(key, 0) > 0 for key in ("stale", "cooldown")):
         return _severity_attr("warn", bold=True)
@@ -924,36 +927,37 @@ def _account_table_layout(width: int) -> list[dict[str, str | int]]:
     if width >= 160:
         return [
             {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
-            {"key": "name", "title": "Account", "width": 32},
+            {"key": "name", "title": "Account", "width": 30},
             {"key": "state", "title": "State", "width": 11},
             {"key": "plan", "title": "Plan", "width": 7},
             {"key": "issue", "title": "Health", "width": 7},
             {"key": "gemini", "title": "Gemini (S/W)", "width": 13, "align": "right"},
             {"key": "claude", "title": "Claude (S/W)", "width": 13, "align": "right"},
-            {"key": "reset", "title": "Reset In", "width": 15, "align": "right"},
+            {"key": "reset", "title": "Reset (S/W)", "width": 19, "align": "right"},
             {"key": "next", "title": "Next", "width": 9, "align": "right"},
             {"key": "error", "title": "Last Error", "width": 18},
         ]
     if width >= 130:
         return [
             {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
-            {"key": "name", "title": "Account", "width": 26},
+            {"key": "name", "title": "Account", "width": 24},
             {"key": "state", "title": "State", "width": 10},
             {"key": "issue", "title": "Health", "width": 7},
             {"key": "gemini", "title": "Gemini (S/W)", "width": 13, "align": "right"},
             {"key": "claude", "title": "Claude (S/W)", "width": 13, "align": "right"},
-            {"key": "reset", "title": "Reset In", "width": 15, "align": "right"},
+            {"key": "reset", "title": "Reset (S/W)", "width": 19, "align": "right"},
             {"key": "next", "title": "Next", "width": 8, "align": "right"},
         ]
-    if width >= 96:
+    if width >= 105:
         return [
             {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
-            {"key": "name", "title": "Account", "width": 22},
-            {"key": "state", "title": "State", "width": 10},
+            {"key": "name", "title": "Account", "width": 18},
+            {"key": "state", "title": "State", "width": 9},
             {"key": "issue", "title": "Health", "width": 7},
-            {"key": "gemini", "title": "Gemini (S/W)", "width": 13, "align": "right"},
-            {"key": "claude", "title": "Claude (S/W)", "width": 13, "align": "right"},
-            {"key": "next", "title": "Next", "width": 8, "align": "right"},
+            {"key": "gemini", "title": "Gemini(S/W)", "width": 12, "align": "right"},
+            {"key": "claude", "title": "Claude(S/W)", "width": 12, "align": "right"},
+            {"key": "reset", "title": "Reset(S/W)", "width": 17, "align": "right"},
+            {"key": "next", "title": "Next", "width": 7, "align": "right"},
         ]
     return [
         {"key": "marker", "title": "Sel", "width": 4, "align": "right"},
@@ -1199,29 +1203,64 @@ def _get_nearest_reset(w1: dict, w2: dict, now) -> dict:
         return w2
     return w1
 
+
+def _format_natural_duration(delta_seconds: int) -> str:
+    if delta_seconds <= 0:
+        return "due"
+    days, rem = divmod(delta_seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h {minutes}m" if minutes else (f"{days}d {hours}h" if hours else f"{days}d")
+    if hours:
+        return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+    if minutes:
+        return f"{minutes}m {seconds:02}s" if seconds else f"{minutes}m"
+    return f"{seconds}s"
+
+
+def _format_reset_compact(window: dict, now: datetime) -> str:
+    if not isinstance(window, dict):
+        return "-"
+    reset_at = _parse_iso_timestamp(window.get("reset_at"))
+    if not reset_at:
+        return "-"
+    delta = int((reset_at - now).total_seconds())
+    if delta <= 0:
+        return "0m"
+    days, rem = divmod(delta, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+    if days > 0:
+        return f"{days}d"
+    if hours > 0:
+        return f"{hours}h"
+    return f"{minutes}m"
+
+
 def _format_countdown(meta: dict, now) -> str:
     g_short = _get_group_window(meta, "gemini_short")
     g_weekly = _get_group_window(meta, "gemini_weekly")
     c_short = _get_group_window(meta, "claude_short")
     c_weekly = _get_group_window(meta, "claude_weekly")
     
-    g_near = _get_nearest_reset(g_short, g_weekly, now)
-    c_near = _get_nearest_reset(c_short, c_weekly, now)
+    has_gemini = g_short.get("status", "unknown") != "unknown" or g_weekly.get("status", "unknown") != "unknown" or g_short.get("reset_at") or g_weekly.get("reset_at")
+    has_claude = c_short.get("status", "unknown") != "unknown" or c_weekly.get("status", "unknown") != "unknown" or c_short.get("reset_at") or c_weekly.get("reset_at")
     
-    has_gemini = g_short.get("status", "unknown") != "unknown" or g_weekly.get("status", "unknown") != "unknown"
-    has_claude = c_short.get("status", "unknown") != "unknown" or c_weekly.get("status", "unknown") != "unknown"
+    g_str = f"{_format_reset_compact(g_short, now)}/{_format_reset_compact(g_weekly, now)}"
+    c_str = f"{_format_reset_compact(c_short, now)}/{_format_reset_compact(c_weekly, now)}"
     
     if has_gemini and has_claude:
-        return f"G:{_format_reset_value(g_near, now)} C:{_format_reset_value(c_near, now)}"
+        return f"G:{g_str} C:{c_str}"
     if has_gemini:
-        return _format_reset_value(g_near, now)
+        return f"G:{g_str}"
     if has_claude:
-        return _format_reset_value(c_near, now)
+        return f"C:{c_str}"
         
     windows = meta.get("usage_windows") if isinstance(meta.get("usage_windows"), dict) else {}
     short = windows.get("short") if isinstance(windows.get("short"), dict) else {}
     weekly = windows.get("weekly") if isinstance(windows.get("weekly"), dict) else {}
-    return _format_reset_value(_get_nearest_reset(short, weekly, now), now)
+    return f"{_format_reset_compact(short, now)}/{_format_reset_compact(weekly, now)}"
 
 
 def _format_age(value: str | None, now: datetime) -> str:
@@ -1229,8 +1268,11 @@ def _format_age(value: str | None, now: datetime) -> str:
     if not dt:
         return "-"
     delta = max(0, int((now - dt).total_seconds()))
-    minutes, seconds = divmod(delta, 60)
-    hours, minutes = divmod(minutes, 60)
+    days, rem = divmod(delta, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h ago" if hours else f"{days}d ago"
     if hours:
         return f"{hours}h{minutes:02}m ago"
     if minutes:
@@ -1246,8 +1288,11 @@ def _format_next_refresh(meta: dict, now: datetime) -> str:
     delta = int((next_check - now).total_seconds())
     if delta <= 0:
         return "due"
-    minutes, seconds = divmod(delta, 60)
-    hours, minutes = divmod(minutes, 60)
+    days, rem = divmod(delta, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h" if hours else f"{days}d"
     if hours:
         return f"{hours}h{minutes:02}m"
     if minutes:
@@ -1269,12 +1314,7 @@ def _format_window_summary(meta: dict, window_name: str, now: datetime) -> str:
         countdown = "-"
     else:
         delta = int((reset_at - now).total_seconds())
-        if delta <= 0:
-            countdown = "due"
-        else:
-            minutes, seconds = divmod(delta, 60)
-            hours, minutes = divmod(minutes, 60)
-            countdown = f"{hours}h{minutes:02}m" if hours else (f"{minutes}m{seconds:02}s" if minutes else f"{seconds}s")
+        countdown = _format_natural_duration(delta)
     if isinstance(value, (int, float)):
         usage = f"{round(float(value))}%"
     return f"{usage} (in {countdown})" if countdown != "-" else usage
@@ -1301,11 +1341,14 @@ def _format_reset_value(window: dict, now: datetime) -> str:
     delta = int((reset_at - now).total_seconds())
     if delta <= 0:
         return "0m"
-    minutes = delta // 60
-    if minutes < 60:
-        return f"{minutes}m"
-    hours = minutes // 60
-    return f"{hours}h"
+    days, rem = divmod(delta, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+    if days:
+        return f"{days}d"
+    if hours:
+        return f"{hours}h"
+    return f"{minutes}m"
 
 
 def _format_live_state(meta: dict, now: datetime) -> str:
@@ -1386,6 +1429,7 @@ SORT_MODES = [
     ("countdown-short", "Countdown Short", "countdown", False),
     ("countdown-long", "Countdown Long", "countdown", True),
 ]
+DEFAULT_SORT_MODE = "usage-low"
 
 
 def _sort_value(name: str, meta: dict, mode_key: str):
@@ -1566,7 +1610,7 @@ def _dashboard(stdscr, paths) -> int:
     refresh_options = [5, 10, 15, 30]
     refresh_idx = 0
     selected_idx = 0
-    sort_idx = 2
+    sort_idx = next((i for i, m in enumerate(SORT_MODES) if m[0] == DEFAULT_SORT_MODE), 3)
     message = ""
     snapshot = _refresh_dashboard_snapshot(paths)
     last_refresh = 0.0

@@ -299,7 +299,7 @@ class LogWatchIntegrationTests(unittest.TestCase):
             blocked = poll_quota_logs(paths, rotate=True)
             self.assertFalse(blocked.rotated)
             self.assertTrue(blocked.restart_required)
-            self.assertIn("waiting for agy restart", blocked.message)
+            self.assertIn("Restart your CLI process", blocked.message)
             snapshot = get_status_snapshot(paths)
             self.assertEqual(snapshot["active"], "account-b")
             self.assertEqual(_cooldown_names(paths), ["account-a"])

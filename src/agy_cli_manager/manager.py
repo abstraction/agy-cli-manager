@@ -159,6 +159,15 @@ class UsageRefreshResult:
 
 
 @dataclass
+class TokenVerificationResult:
+    status: str  # "ok", "mismatch", "duplicate", "unknown"
+    token_email: str | None = None
+    expected_email: str | None = None
+    colliding_account: str | None = None
+    message: str = ""
+
+
+@dataclass
 class EnsureActiveResult:
     triggered: bool
     switch_mode: str
@@ -1566,9 +1575,12 @@ def _persist_refresh_failure(paths: ManagerPaths, account_name: str, error: str)
     with manager_lock(paths):
         state = sync_state_from_disk(paths, load_state(paths))
         meta = state["accounts"].get(account_name)
-        if meta is None:
-            return
-        meta["health_status"] = "refresh_failed"
+        if "Token mismatch" in error:
+            meta["health_status"] = "token_mismatch"
+        elif "Duplicate token" in error:
+            meta["health_status"] = "token_duplicate"
+        else:
+            meta["health_status"] = "refresh_failed"
         meta["last_live_check_error"] = error
         meta["refresh_fail_count"] = int(meta.get("refresh_fail_count", 0) or 0) + 1
         meta["next_live_check_at"] = _normalize_timestamp(failed_at + timedelta(minutes=5))
@@ -1586,6 +1598,10 @@ def refresh_account_usage(
         state = sync_state_from_disk(paths, load_state(paths))
         account_name, source_home = _resolve_usage_refresh_target(paths, state, name)
     try:
+        verification = check_token_account_match(paths, account_name, source_home, state)
+        if verification.status in {"mismatch", "duplicate"}:
+            raise ValueError(verification.message)
+
         needs_warmup = False
         try:
             access_token = _extract_access_token(source_home)
@@ -1719,6 +1735,9 @@ def refresh_account_usage(
             policy_seconds = int(meta.get("refresh_policy_seconds", DEFAULT_REFRESH_POLICY_SECONDS) or DEFAULT_REFRESH_POLICY_SECONDS)
             meta["next_live_check_at"] = _normalize_timestamp(refreshed_at + timedelta(seconds=policy_seconds))
             meta["identity"] = refreshed_identity
+            refreshed_email = refreshed_identity.get("email") or refreshed_identity.get("account_name")
+            if refreshed_email and isinstance(refreshed_email, str):
+                meta.setdefault("expected_email", refreshed_email)
             # Auto-clear cooldown when fresh quota confirms the short window is above the
             # exhaustion threshold — the account has recovered and no longer needs to sit out.
             cooldown_until = parse_timestamp(meta.get("cooldown_until"))
@@ -1847,6 +1866,13 @@ def _identity_from_antigravity_token(token_state: dict) -> dict | None:
     direct_identity = _identity_from_payload(token_state, "antigravity-oauth-token")
     if direct_identity:
         return direct_identity
+    for token_key in ("id_token", "access_token"):
+        token_value = token_state.get(token_key)
+        if isinstance(token_value, str) and token_value.strip() and token_value.count(".") >= 2:
+            payload = _decode_jwt_payload(token_value.strip())
+            identity = _identity_from_payload(payload or {}, f"antigravity-oauth-token.{token_key}")
+            if identity:
+                return identity
     token = token_state.get("token")
     if isinstance(token, dict):
         token_identity = _identity_from_payload(token, "antigravity-oauth-token.token")
@@ -2039,6 +2065,82 @@ def get_account_identity(paths: ManagerPaths, name: str | None = None) -> tuple[
     return resolved_name, refresh_account_identity(paths, resolved_name)
 
 
+def check_token_account_match(
+    paths: ManagerPaths,
+    name: str,
+    source_home: Path,
+    state: dict | None = None,
+) -> TokenVerificationResult:
+    token_identity = detect_profile_identity(source_home)
+    token_email = token_identity.get("email") or token_identity.get("account_name")
+    if not token_email or not isinstance(token_email, str):
+        return TokenVerificationResult(
+            status="unknown",
+            message="Could not determine account email from token.",
+        )
+
+    if state is None:
+        state = sync_state_from_disk(paths, load_state(paths))
+
+    meta = state.get("accounts", {}).get(name, {})
+    expected_email = meta.get("expected_email")
+    if not expected_email:
+        ident = meta.get("identity")
+        if isinstance(ident, dict):
+            expected_email = ident.get("email") or ident.get("account_name")
+    if not expected_email and "@" in name:
+        expected_email = name.strip()
+
+    # If an expected email is established, check for mismatch
+    if expected_email and token_email.lower() != expected_email.lower():
+        return TokenVerificationResult(
+            status="mismatch",
+            token_email=token_email,
+            expected_email=expected_email,
+            message=(
+                f"Token mismatch: token belongs to '{token_email}', but account "
+                f"'{name}' expected '{expected_email}'. Run 'acm login {name}' to fix."
+            ),
+        )
+
+    # Check for duplicate tokens across all other accounts
+    for other_name, other_meta in state.get("accounts", {}).items():
+        if other_name == name:
+            continue
+        other_email = other_meta.get("expected_email")
+        if not other_email:
+            other_ident = other_meta.get("identity")
+            if isinstance(other_ident, dict):
+                other_email = other_ident.get("email") or other_ident.get("account_name")
+        if not other_email and "@" in other_name:
+            other_email = other_name.strip()
+        if not other_email:
+            try:
+                other_dir = account_dir(paths, other_name)
+                other_id = detect_profile_identity(other_dir)
+                other_email = other_id.get("email") or other_id.get("account_name")
+            except Exception:
+                pass
+        if other_email and isinstance(other_email, str) and other_email.lower() == token_email.lower():
+            return TokenVerificationResult(
+                status="duplicate",
+                token_email=token_email,
+                expected_email=expected_email,
+                colliding_account=other_name,
+                message=(
+                    f"Duplicate token: token email '{token_email}' is already used by "
+                    f"account '{other_name}'. Run 'acm login {name}' with the correct account."
+                ),
+            )
+
+    return TokenVerificationResult(
+        status="ok",
+        token_email=token_email,
+        expected_email=expected_email or token_email,
+        message="Token matches expected account.",
+    )
+
+
 def probe_profile_identity_via_usage(
     source_dir: Path,
     agy_binary: str | None = None,
@@ -2195,6 +2297,7 @@ def verify_account(paths: ManagerPaths, name: str, meta: dict) -> dict:
             access_token_expired = False
 
     health_status = _derive_health_status(paths, name, meta)
+    token_ver = check_token_account_match(paths, name, source_home) if has_artifacts else None
     problem_status = "ok"
     recommended_action = "none"
     summary = "Ready for use."
@@ -2215,6 +2318,11 @@ def verify_account(paths: ManagerPaths, name: str, meta: dict) -> dict:
         problem_status = "logged_out"
         recommended_action = "relogin"
         summary = "Access token is expired and no refresh token is available."
+    elif token_ver and token_ver.status in {"mismatch", "duplicate"}:
+        problem_status = f"token_{token_ver.status}"
+        recommended_action = "relogin"
+        summary = token_ver.message
+        health_status = f"token_{token_ver.status}"
     elif meta.get("last_live_check_error"):
         problem_status = "refresh_failed"
         recommended_action = "refresh"
@@ -2365,6 +2473,7 @@ def save_account_profile(paths: ManagerPaths, name: str, source_dir: Path, overw
             "next_live_check_at": previous_meta.get("next_live_check_at"),
             "refresh_policy_seconds": int(previous_meta.get("refresh_policy_seconds", DEFAULT_REFRESH_POLICY_SECONDS) or DEFAULT_REFRESH_POLICY_SECONDS),
             "identity": identity,
+            "expected_email": (identity.get("email") if isinstance(identity, dict) else None) or (identity.get("account_name") if isinstance(identity, dict) else None) or previous_meta.get("expected_email"),
             "plan_type": previous_meta.get("plan_type"),
             "proxy": _normalize_proxy_config(previous_meta.get("proxy")),
         }
@@ -3106,13 +3215,49 @@ def login_account(
 
         identity = resolve_login_profile_identity(live_dir, agy_binary=resolved_binary, live_dir=live_dir)
         detected_name = identity.get("account_name")
-        # The caller's name is the stable profile label.  Keep detected identity
-        # as metadata so two profiles from the same or changing login identity do
-        # not collapse onto one storage directory.
+        detected_email = identity.get("email") or detected_name
+        display_name = identity.get("display_name")
         storage_name = normalize_account_storage_name(name)
-        if detected_name and storage_name != name:
-            print(f"detected-account: {detected_name}")
-            print(f"storage-name: {storage_name}")
+
+        with manager_lock(paths):
+            current_state = sync_state_from_disk(paths, load_state(paths))
+        colliding_account = None
+        for other_name, other_meta in current_state.get("accounts", {}).items():
+            if other_name == storage_name:
+                continue
+            other_email = other_meta.get("expected_email")
+            if not other_email:
+                other_ident = other_meta.get("identity")
+                if isinstance(other_ident, dict):
+                    other_email = other_ident.get("email") or other_ident.get("account_name")
+            if not other_email and "@" in other_name:
+                other_email = other_name.strip()
+            if other_email and detected_email and str(other_email).lower() == str(detected_email).lower():
+                colliding_account = other_name
+                break
+
+        print("\n" + "=" * 48)
+        print("ACM Account Verification")
+        print(f"Target Account : {name}")
+        if detected_email:
+            name_info = f" ({display_name})" if display_name else ""
+            print(f"Detected Email : {detected_email}{name_info}")
+        else:
+            print("Detected Email : (Could not determine email from token)")
+        print("=" * 48)
+
+        if colliding_account:
+            print(f"\n[WARNING] Account '{colliding_account}' is already using email '{detected_email}'!")
+            print("This token appears to belong to an existing account, not a new one.")
+
+        if "@" in name and detected_email and name.strip().lower() != str(detected_email).lower():
+            print(f"\n[WARNING] Target account name is '{name}', but the logged-in token is for '{detected_email}'!")
+
+        confirm_prompt = f"\nConfirm saving token for account '{name}'? [Y/n]: "
+        confirm_ans = input(confirm_prompt).strip().lower()
+        if confirm_ans in {"n", "no"}:
+            print("Login cancelled. Token discarded and active account restored.")
+            return None
 
         overwrite = False
         if account_dir(paths, storage_name).exists():
@@ -3125,6 +3270,12 @@ def login_account(
                 overwrite = True
 
         save_account_profile(paths, storage_name, runtime_home, overwrite=overwrite)
+        if detected_email:
+            with manager_lock(paths):
+                state = sync_state_from_disk(paths, load_state(paths))
+                if storage_name in state.get("accounts", {}):
+                    state["accounts"][storage_name]["expected_email"] = detected_email
+                    save_state(paths, state)
         return storage_name
 
     finally:

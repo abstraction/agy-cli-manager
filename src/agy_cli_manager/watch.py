@@ -407,6 +407,7 @@ def poll_quota_logs(
                     reason="quota",
                     cooldown_minutes=cooldown_minutes,
                     force_switch=force_switch,
+                    dedupe_seconds=0,
                     trigger="log-watch",
                 )
                 rotated = rotation.outcome == "switched"

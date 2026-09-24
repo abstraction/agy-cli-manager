@@ -295,8 +295,7 @@ def load_state(paths: ManagerPaths) -> dict:
     data["switch_policy"] = _normalize_switch_policy(data.get("switch_policy"))
     data["switch_runtime"] = _normalize_switch_runtime(data.get("switch_runtime"))
     data["switch_history"] = _normalize_switch_history(data.get("switch_history"))
-    if data.get("live_dir") is None:
-        data["live_dir"] = str(default_live_dir())
+
     return data
 
 
@@ -1361,7 +1360,7 @@ def _best_switch_candidate(paths: ManagerPaths, state: dict, *, exclude: str | N
         ranked.append((score, name))
 
     if not ranked:
-        return candidates[0]
+        return None
 
     ranked.sort(key=lambda item: item[0])
     return ranked[0][1]
@@ -3051,7 +3050,8 @@ def rotate_after_failure_locked(
 
     last_completed_at = parse_timestamp(runtime.get("last_completed_at"))
     if (
-        runtime.get("status") == "ready"
+        dedupe_seconds > 0
+        and runtime.get("status") == "ready"
         and runtime.get("reason") == reason
         and last_completed_at is not None
         and (now - last_completed_at).total_seconds() <= dedupe_seconds

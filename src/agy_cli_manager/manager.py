@@ -301,10 +301,18 @@ def load_state(paths: ManagerPaths) -> dict:
 
 
 def save_state(paths: ManagerPaths, state: dict) -> None:
-    temp_file = paths.state_file.with_name(paths.state_file.name + ".tmp")
-    with temp_file.open("w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, sort_keys=True)
-    temp_file.replace(paths.state_file)
+    fd, temp_path = tempfile.mkstemp(
+        dir=paths.state_file.parent,
+        prefix=paths.state_file.name + "_",
+        suffix=".json"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, sort_keys=True)
+        os.replace(temp_path, paths.state_file)
+    except Exception:
+        os.remove(temp_path)
+        raise
 
 
 def _normalize_switch_mode(value: object) -> str:
@@ -492,7 +500,15 @@ def _append_switch_history(
 
 
 def account_dir(paths: ManagerPaths, name: str) -> Path:
-    return paths.accounts_dir / name
+    if not name or "/" in name or "\\" in name or name in {".", ".."}:
+        raise ValueError(f"Invalid and potentially unsafe account name: {name}")
+    
+    target_path = paths.accounts_dir / name
+    
+    if target_path.is_symlink():
+        raise ValueError(f"Account directory {name} is a symlink, which is not allowed.")
+        
+    return target_path
 
 
 def _clear_directory(path: Path) -> None:
@@ -3226,58 +3242,57 @@ def login_account(
         state["live_dir"] = str(live_dir.resolve())
         save_state(paths, state)
 
-    try:
-        runtime_home = live_dir.parent
-        runtime_home.mkdir(parents=True, exist_ok=True)
-        _remove_managed_profile_files(live_dir)
-
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="agy_login_") as temp_dir_name:
+        temp_home = Path(temp_dir_name)
+        temp_live_dir = temp_home / ".gemini"
+        temp_live_dir.mkdir(parents=True, exist_ok=True)
+        
         env = os.environ.copy()
-        env["HOME"] = str(runtime_home)
-        env["PATH"] = env.get("PATH", "/bin:/usr/bin:/usr/local/bin")
-        try:
-            proc = subprocess.Popen(
-                [resolved_binary],
-                stdin=sys.stdin,
-                stdout=sys.stdout,
-                stderr=sys.stderr,
-                cwd=runtime_home,
-                env=env,
-                close_fds=True,
-            )
-        except FileNotFoundError as exc:
-            raise ValueError(f"agy binary not found: {resolved_binary}") from exc
+        
+        with _isolated_keyring_warmup(temp_home):
+            try:
+                proc = subprocess.Popen(
+                    [resolved_binary],
+                    stdin=sys.stdin,
+                    stdout=sys.stdout,
+                    stderr=sys.stderr,
+                    cwd=temp_home,
+                    env=env,
+                    close_fds=True,
+                )
+            except FileNotFoundError as exc:
+                raise ValueError(f"agy binary not found: {resolved_binary}") from exc
 
-        start_time = time.time()
-        print("Launching real agy login session.")
-        print("Complete onboarding/login there, then exit agy to save the profile.")
-        sys.stdout.flush()
-        try:
-            while True:
-                if proc.poll() is not None:
-                    break
-                if time.time() - start_time > timeout_seconds:
+            start_time = time.time()
+            print("Launching real agy login session.")
+            print("Complete onboarding/login there, then exit agy to save the profile.")
+            sys.stdout.flush()
+            try:
+                while True:
+                    if proc.poll() is not None:
+                        break
+                    if time.time() - start_time > timeout_seconds:
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=3)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                        raise ValueError(f"Login timed out after {timeout_seconds} seconds.")
+                    time.sleep(0.2)
+            except KeyboardInterrupt:
+                if proc.poll() is None:
                     proc.terminate()
                     try:
                         proc.wait(timeout=3)
                     except subprocess.TimeoutExpired:
                         proc.kill()
-                    raise ValueError(f"Login timed out after {timeout_seconds} seconds.")
-                time.sleep(0.2)
-        except KeyboardInterrupt:
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-            raise
+                raise
 
-        _sync_keyring_to_home(runtime_home)
-
-        if not live_dir.is_dir() or not profile_has_login_artifacts(live_dir):
+        if not temp_live_dir.is_dir() or not profile_has_login_artifacts(temp_live_dir):
             raise ValueError("agy login did not produce a usable auth profile.")
 
-        identity = resolve_login_profile_identity(live_dir, agy_binary=resolved_binary, live_dir=live_dir)
+        identity = resolve_login_profile_identity(temp_live_dir, agy_binary=resolved_binary, live_dir=temp_live_dir)
         detected_name = identity.get("account_name")
         detected_email = identity.get("email") or detected_name
         display_name = identity.get("display_name")
@@ -3333,7 +3348,7 @@ def login_account(
             else:
                 overwrite = True
 
-        save_account_profile(paths, storage_name, runtime_home, overwrite=overwrite)
+        save_account_profile(paths, storage_name, temp_home, overwrite=overwrite)
         if detected_email:
             with manager_lock(paths):
                 state = sync_state_from_disk(paths, load_state(paths))
@@ -3342,16 +3357,6 @@ def login_account(
                     save_state(paths, state)
         return storage_name
 
-    finally:
-        with manager_lock(paths):
-            state = sync_state_from_disk(paths, load_state(paths))
-            active = state.get("active")
-            if active:
-                try:
-                    _copy_active_runtime(paths, active)
-                    _sync_runtime_to_live_dir(paths, state)
-                except Exception:
-                    pass
 
 
 def format_status(paths: ManagerPaths) -> str:

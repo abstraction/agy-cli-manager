@@ -218,19 +218,23 @@ class LoginAccountConfirmationTests(unittest.TestCase):
     @patch("subprocess.Popen")
     @patch("builtins.input", return_value="n")
     def test_login_declined_aborts_without_saving(self, mock_input, mock_popen, mock_isatty) -> None:
-        def write_token():
-            token_dir = self.live_dir / "antigravity-cli"
-            token_dir.mkdir(parents=True, exist_ok=True)
-            (token_dir / "antigravity-oauth-token").write_text(
-                json.dumps({"token": {"access_token": "ya29.test"}, "id_token": _make_jwt("test@gmail.com")}),
-                encoding="utf-8",
-            )
-            return 0
+        def popen_side_effect(*args, **kwargs):
+            cwd_path = kwargs.get("cwd")
+            def write_token():
+                token_dir = cwd_path / ".gemini" / "antigravity-cli"
+                token_dir.mkdir(parents=True, exist_ok=True)
+                (token_dir / "antigravity-oauth-token").write_text(
+                    json.dumps({"token": {"access_token": "ya29.test"}, "id_token": _make_jwt("test@gmail.com")}),
+                    encoding="utf-8",
+                )
+                return 0
 
-        proc = MagicMock()
-        proc.poll.side_effect = write_token
-        proc.returncode = 0
-        mock_popen.return_value = proc
+            proc = MagicMock()
+            proc.poll.side_effect = write_token
+            proc.returncode = 0
+            return proc
+        
+        mock_popen.side_effect = popen_side_effect
 
         saved = login_account(self.paths, "new_acc", agy_binary="/fake/agy")
         self.assertIsNone(saved)
@@ -240,19 +244,23 @@ class LoginAccountConfirmationTests(unittest.TestCase):
     @patch("subprocess.Popen")
     @patch("builtins.input", side_effect=["y", "y"])
     def test_login_confirmed_saves_account_and_expected_email(self, mock_input, mock_popen, mock_isatty) -> None:
-        def write_token():
-            token_dir = self.live_dir / "antigravity-cli"
-            token_dir.mkdir(parents=True, exist_ok=True)
-            (token_dir / "antigravity-oauth-token").write_text(
-                json.dumps({"token": {"access_token": "ya29.test"}, "id_token": _make_jwt("confirmed@gmail.com")}),
-                encoding="utf-8",
-            )
-            return 0
+        def popen_side_effect(*args, **kwargs):
+            cwd_path = kwargs.get("cwd")
+            def write_token():
+                token_dir = cwd_path / ".gemini" / "antigravity-cli"
+                token_dir.mkdir(parents=True, exist_ok=True)
+                (token_dir / "antigravity-oauth-token").write_text(
+                    json.dumps({"token": {"access_token": "ya29.test"}, "id_token": _make_jwt("confirmed@gmail.com")}),
+                    encoding="utf-8",
+                )
+                return 0
 
-        proc = MagicMock()
-        proc.poll.side_effect = write_token
-        proc.returncode = 0
-        mock_popen.return_value = proc
+            proc = MagicMock()
+            proc.poll.side_effect = write_token
+            proc.returncode = 0
+            return proc
+        
+        mock_popen.side_effect = popen_side_effect
 
         saved = login_account(self.paths, "new_acc", agy_binary="/fake/agy")
         self.assertEqual(saved, "new_acc")

@@ -33,3 +33,8 @@ Once installed as editable, you do not need to rerun the install command when yo
 ## 6. Logging
 - A rolling log of critical manager actions (account switches, failovers, marking accounts bad, etc.) is kept for 7 days.
 - **Location:** The log file is located at `~/.agy-cli-manager/logs/manager.log`.
+
+## 7. Upstream Syncs and Rejections
+Because we maintain Linux-specific OS Keyring isolation, we cannot blindly merge updates from upstream (`zcop/agy-cli-manager`), which uses flat files and `$HOME` overrides for concurrency.
+- **Rule:** When pulling upstream updates, reject any commits that replace or break our `_isolated_keyring_warmup` and `ps`-based process blocking.
+- **Documentation:** Log any deliberately rejected upstream commits in `rejected_upstream.md` with concise, plain-speech reasons for why they break Linux account keeping.

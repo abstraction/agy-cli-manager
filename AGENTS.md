@@ -35,6 +35,9 @@ Once installed as editable, you do not need to rerun the install command when yo
 - **Location:** The log file is located at `~/.agy-cli-manager/logs/manager.log`.
 
 ## 7. Upstream Syncs and Rejections
-Because we maintain Linux-specific OS Keyring isolation, we cannot blindly merge updates from upstream (`zcop/agy-cli-manager`), which uses flat files and `$HOME` overrides for concurrency.
-- **Rule:** When pulling upstream updates, reject any commits that replace or break our `_isolated_keyring_warmup` and `ps`-based process blocking.
-- **Documentation:** Log both ported and deliberately rejected upstream commits in `UPSTREAM_COMMITS.md`. Provide concise, plain-speech reasons for why specific commits break Linux account keeping.
+Because we maintain Linux-specific OS Keyring isolation, we cannot blindly merge updates from upstream (`zcop/agy-cli-manager`). Upstream targets environments that use flat files and `$HOME` overrides for concurrency.
+
+When syncing with upstream, you must follow this exact protocol:
+1. **Analyze every commit.** Look at the full commit list (e.g., `git log origin/main..upstream/main`). Do not skip any commits, even if they seem minor. If the diff shows 11 commits, your plan must account for 11 commits.
+2. **Protect the Keyring.** Reject any upstream commit that replaces or breaks our `_isolated_keyring_warmup` and `ps`-based process blocking.
+3. **Document everything.** Record your sync in `UPSTREAM_COMMITS.md`. Group the commits into "Ported", "Rejected", and "Ignored/Meta". Provide plain, concise reasons why you rejected specific commits (e.g., "overrides $HOME, breaking Linux DBus").

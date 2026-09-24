@@ -1,13 +1,13 @@
 # agy-cli-manager
 
-> [!NOTE]
+> [!IMPORTANT]
 > **Linux-only fork.**
 >
-> [Upstream](https://github.com/zcop/agy-cli-manager) expects `agy` OAuth tokens in flat files, crashing on [Windows](https://github.com/zcop/agy-cli-manager/issues/1) and [macOS](https://github.com/zcop/agy-cli-manager/issues/2). On Linux, `agy` uses the global Secret Service.
+> [Upstream](https://github.com/zcop/agy-cli-manager) expects `agy` OAuth tokens in flat files. That breaks on Linux, where `agy` hardcodes D-Bus calls to the global Secret Service.
 >
-> This fork adds OS keyring isolation so background quota checks stop wiping out your active terminal session. It also adds user-agent spoofing, fixes API parsing, and overhauls the TUI.
+> This fork adds OS keyring isolation. Background quota checks will no longer wipe out your active terminal session. We also add user-agent spoofing, fix API parsing, and overhaul the TUI.
 >
-> For details on how we synchronize with upstream and which commits we reject to maintain this isolation, see [UPSTREAM_COMMITS.md](./UPSTREAM_COMMITS.md).
+> We track upstream closely. Read the [Upstream Synchronization Log](./UPSTREAM_COMMITS.md) to see exactly which features we port and which ones we block to protect your keyring.
 
 ---
 

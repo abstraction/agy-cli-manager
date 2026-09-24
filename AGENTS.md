@@ -37,4 +37,4 @@ Once installed as editable, you do not need to rerun the install command when yo
 ## 7. Upstream Syncs and Rejections
 Because we maintain Linux-specific OS Keyring isolation, we cannot blindly merge updates from upstream (`zcop/agy-cli-manager`), which uses flat files and `$HOME` overrides for concurrency.
 - **Rule:** When pulling upstream updates, reject any commits that replace or break our `_isolated_keyring_warmup` and `ps`-based process blocking.
-- **Documentation:** Log any deliberately rejected upstream commits in `rejected_upstream.md` with concise, plain-speech reasons for why they break Linux account keeping.
+- **Documentation:** Log both ported and deliberately rejected upstream commits in `UPSTREAM_COMMITS.md`. Provide concise, plain-speech reasons for why specific commits break Linux account keeping.

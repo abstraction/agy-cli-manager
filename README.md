@@ -7,7 +7,7 @@
 >
 > This fork adds OS keyring isolation so background quota checks stop wiping out your active terminal session. It also adds user-agent spoofing, fixes API parsing, and overhauls the TUI.
 >
-> For details on which upstream commits we reject to maintain this isolation, see [rejected_upstream.md](./rejected_upstream.md).
+> For details on how we synchronize with upstream and which commits we reject to maintain this isolation, see [UPSTREAM_COMMITS.md](./UPSTREAM_COMMITS.md).
 
 ---
 

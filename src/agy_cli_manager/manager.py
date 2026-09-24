@@ -2900,10 +2900,73 @@ def set_live_dir(paths: ManagerPaths, live_dir: Path | None) -> None:
         if state.get("active"):
             _sync_runtime_to_live_dir(paths, state)
         save_state(paths, state)
+def _get_running_agy_processes() -> list[tuple[int, str]]:
+    current_uid = os.getuid()
+    current_pid = os.getpid()
+    
+    agy_procs = []
+    try:
+        if sys.platform.startswith("linux"):
+            ps_cmd = ["ps", "-u", str(current_uid), "-o", "pid,args"]
+        elif sys.platform == "darwin":
+            ps_cmd = ["ps", "-u", str(current_uid), "-o", "pid,command"]
+        else:
+            return []
+            
+        result = subprocess.run(ps_cmd, capture_output=True, text=True, check=True)
+        lines = result.stdout.strip().split('\n')[1:]
+        
+        for line in lines:
+            parts = line.strip().split(maxsplit=1)
+            if len(parts) < 2:
+                continue
+                
+            pid_str, cmd_str = parts
+            if not pid_str.isdigit():
+                continue
+                
+            pid = int(pid_str)
+            if pid == current_pid:
+                continue
+                
+            cmdline = cmd_str.split()
+            if not cmdline:
+                continue
+                
+            is_agy = False
+            if cmdline[0] == 'agy' or cmdline[0].endswith('/agy'):
+                is_agy = True
+            elif len(cmdline) >= 3 and cmdline[1] == '-m' and cmdline[2] == 'agy':
+                is_agy = True
+            elif len(cmdline) >= 2 and ('python' in cmdline[0] or 'python3' in cmdline[0]):
+                if cmdline[1].endswith('/agy') or cmdline[1] == 'agy':
+                    is_agy = True
+                    
+            if is_agy:
+                if 'agy-cli-manager' in cmd_str or 'acm' in cmd_str:
+                    is_agy = False
+                    
+            if is_agy:
+                agy_procs.append((pid, cmd_str))
+    except Exception:
+        pass
+        
+    return agy_procs
+
+
+def _ensure_safe_account_switch() -> None:
+    procs = _get_running_agy_processes()
+    if procs:
+        pids = [str(p[0]) for p in procs]
+        raise RuntimeError(
+            f"Cannot safely switch accounts. Active 'agy' processes detected (PIDs: {', '.join(pids)}). "
+            f"Please terminate them to avoid global OS keyring corruption."
+        )
 
 
 def apply_active(paths: ManagerPaths) -> str:
     logger = get_logger(paths.root)
+    _ensure_safe_account_switch()
     with manager_lock(paths):
         state = sync_state_from_disk(paths, load_state(paths))
         active = state.get("active")
@@ -3154,6 +3217,7 @@ def login_account(
         raise ValueError("Account name cannot be empty.")
     if not os.isatty(sys.stdin.fileno()):
         raise ValueError("Interactive login requires a TTY.")
+    _ensure_safe_account_switch()
 
     resolved_binary = resolve_agy_binary(agy_binary)
     with manager_lock(paths):

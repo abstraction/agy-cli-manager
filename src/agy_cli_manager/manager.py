@@ -2510,6 +2510,41 @@ def add_account(paths: ManagerPaths, name: str, source_dir: Path) -> None:
     save_account_profile(paths, name, source_dir, overwrite=False)
 
 
+def rename_account(paths: ManagerPaths, old_name: str, new_name: str) -> None:
+    """Rename an existing account profile on disk and in state.
+    
+    Holds manager_lock to ensure atomic update of the state and directory rename.
+    
+    Raises:
+        ValueError: if old_name does not exist or new_name already exists.
+    """
+    old_name = old_name.strip()
+    new_name = new_name.strip()
+    if not old_name or not new_name:
+        raise ValueError("Account names cannot be empty.")
+        
+    with manager_lock(paths):
+        state = load_state(paths)
+        if old_name not in state["accounts"]:
+            raise ValueError(f"Account '{old_name}' not found.")
+        if new_name in state["accounts"]:
+            raise ValueError(f"Account '{new_name}' already exists.")
+            
+        old_dir = paths.accounts_dir / old_name
+        new_dir = paths.accounts_dir / new_name
+        
+        if not old_dir.exists():
+            raise ValueError(f"Account directory for '{old_name}' is missing on disk.")
+            
+        old_dir.rename(new_dir)
+        
+        state["accounts"][new_name] = state["accounts"].pop(old_name)
+        if state.get("active") == old_name:
+            state["active"] = new_name
+            
+        save_state(paths, state)
+
+
 def delete_account(paths: ManagerPaths, name: str) -> bool:
     """Permanently remove an account profile from disk and from state.
 

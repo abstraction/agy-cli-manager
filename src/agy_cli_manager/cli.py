@@ -17,6 +17,7 @@ from agy_cli_manager.manager import (
     build_paths,
     clear_bad,
     delete_account,
+    rename_account,
     default_root,
     ensure_active_account,
     ensure_layout,
@@ -173,6 +174,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     clear = sub.add_parser("clear-bad", help="Clear cooldown/error state for an account")
     clear.add_argument("name")
+
+    rename_cmd = sub.add_parser("rename", help="Rename an existing account profile")
+    rename_cmd.add_argument("old_name", help="The current account name")
+    rename_cmd.add_argument("new_name", help="The new account name")
+    rename_cmd.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     delete_cmd = sub.add_parser("delete", help="Permanently delete an account and its saved profile")
     delete_cmd.add_argument("name")
@@ -2546,6 +2552,16 @@ def main() -> int:
         if args.command == "clear-bad":
             clear_bad(paths, args.name)
             print(f"cleared-bad: {args.name}")
+            return 0
+        if args.command == "rename":
+            rename_account(paths, args.old_name, args.new_name)
+            if args.json:
+                print(json.dumps({
+                    "renamed_from": args.old_name,
+                    "renamed_to": args.new_name,
+                }, indent=2, sort_keys=True))
+            else:
+                print(f"renamed: '{args.old_name}' -> '{args.new_name}'")
             return 0
         if args.command == "delete":
             was_active = delete_account(paths, args.name)

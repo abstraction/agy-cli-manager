@@ -293,6 +293,7 @@ def run_menu(paths, parser: argparse.ArgumentParser) -> int:
         print("16. Set account proxy")
         print("17. Clear account proxy")
         print("18. Delete account (irreversible)")
+        print("19. Rename account")
         print("0. Exit")
 
         choice = input("Select: ").strip()
@@ -408,6 +409,11 @@ def run_menu(paths, parser: argparse.ArgumentParser) -> int:
                     was_active = delete_account(paths, name)
                     suffix = " (was active — switch to another account)" if was_active else ""
                     print(f"deleted: {name}{suffix}")
+            elif choice == "19":
+                old_name = prompt_nonempty("Current account name")
+                new_name = prompt_nonempty("New account name")
+                rename_account(paths, old_name, new_name)
+                print(f"renamed: '{old_name}' -> '{new_name}'")
             elif choice == "0":
                 return 0
             else:
@@ -833,6 +839,7 @@ def _draw_action_bar(stdscr, y: int) -> int:
         ("E", "Toggle State"),
         ("C", "Clear Broken"),
         ("M", "Flag Broken"),
+        ("F2/V", "Rename"),
         ("D", "Delete"),
         ("W", "Auto/Manual"),
         ("Y", "Dismiss Warn"),
@@ -1508,6 +1515,13 @@ def _dashboard_import(paths) -> str:
     return f"imported-current: {name}"
 
 
+def _dashboard_rename(paths, selected_name: str) -> str:
+    print(f"\n[agy-cli-manager] Rename Account: {selected_name}\n")
+    new_name = prompt_nonempty("New account name")
+    rename_account(paths, selected_name, new_name)
+    return f"renamed: '{selected_name}' -> '{new_name}'"
+
+
 def _proxy_dashboard(stdscr, paths) -> int:
     _init_dashboard_colors()
     try:
@@ -1940,6 +1954,11 @@ def _dashboard(stdscr, paths) -> int:
             elif key in (ord("m"), ord("M")):
                 mark_bad(paths, selected_name, "manual", 60)
                 message = f"Flagged {selected_name} as broken (60m cooldown)."
+            elif key in (curses.KEY_F2, ord("v"), ord("V")):
+                try:
+                    message = _run_dashboard_terminal_action(stdscr, lambda: _dashboard_rename(paths, selected_name))
+                except (ValueError, KeyboardInterrupt) as exc:
+                    message = "Cancelled." if isinstance(exc, KeyboardInterrupt) else f"Error: {exc}"
             elif key in (ord("d"), ord("D")):
                 # Two-row confirmation: prompt on second-to-last line, input on last line.
                 # This avoids the bug where a long prompt string pushes the getstr cursor

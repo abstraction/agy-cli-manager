@@ -3242,22 +3242,21 @@ def login_account(
         state["live_dir"] = str(live_dir.resolve())
         save_state(paths, state)
 
-    import tempfile
-    with tempfile.TemporaryDirectory(prefix="agy_login_") as temp_dir_name:
-        temp_home = Path(temp_dir_name)
-        temp_live_dir = temp_home / ".gemini"
-        temp_live_dir.mkdir(parents=True, exist_ok=True)
-        
+    try:
+        runtime_home = live_dir.parent
+        runtime_home.mkdir(parents=True, exist_ok=True)
+        _remove_managed_profile_files(live_dir)
+
         env = os.environ.copy()
         
-        with _isolated_keyring_warmup(temp_home):
+        with _isolated_keyring_warmup(runtime_home):
             try:
                 proc = subprocess.Popen(
                     [resolved_binary],
                     stdin=sys.stdin,
                     stdout=sys.stdout,
                     stderr=sys.stderr,
-                    cwd=temp_home,
+                    cwd=runtime_home,
                     env=env,
                     close_fds=True,
                 )
@@ -3289,10 +3288,10 @@ def login_account(
                         proc.kill()
                 raise
 
-        if not temp_live_dir.is_dir() or not profile_has_login_artifacts(temp_live_dir):
+        if not live_dir.is_dir() or not profile_has_login_artifacts(live_dir):
             raise ValueError("agy login did not produce a usable auth profile.")
 
-        identity = resolve_login_profile_identity(temp_live_dir, agy_binary=resolved_binary, live_dir=temp_live_dir)
+        identity = resolve_login_profile_identity(live_dir, agy_binary=resolved_binary, live_dir=live_dir)
         detected_name = identity.get("account_name")
         detected_email = identity.get("email") or detected_name
         display_name = identity.get("display_name")
@@ -3348,7 +3347,7 @@ def login_account(
             else:
                 overwrite = True
 
-        save_account_profile(paths, storage_name, temp_home, overwrite=overwrite)
+        save_account_profile(paths, storage_name, runtime_home, overwrite=overwrite)
         if detected_email:
             with manager_lock(paths):
                 state = sync_state_from_disk(paths, load_state(paths))
@@ -3356,6 +3355,17 @@ def login_account(
                     state["accounts"][storage_name]["expected_email"] = detected_email
                     save_state(paths, state)
         return storage_name
+        
+    finally:
+        with manager_lock(paths):
+            state = sync_state_from_disk(paths, load_state(paths))
+            active = state.get("active")
+            if active:
+                try:
+                    _copy_active_runtime(paths, active)
+                    _sync_runtime_to_live_dir(paths, state)
+                except Exception:
+                    pass
 
 
 
